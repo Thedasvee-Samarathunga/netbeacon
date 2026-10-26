@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netbeacon"
+version = "1.0.0"
+description = "A friendly, teaching-first network monitor for small businesses, built on SimpleMonitor"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+  "simplemonitor==1.15.0",
+  "PySide6-Essentials>=6.6", "arrow>=1.2", "requests>=2.31", "colorlog>=6.7", "psutil>=5.9", "icmplib>=3.0", "Jinja2>=3.1",
+]
+
+[project.gui-scripts]
+netbeacon = "netbeacon.app:main"
+
+[tool.setuptools]
+packages = ["netbeacon", "netbeacon.ui", "netbeacon.ui.pages"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 180

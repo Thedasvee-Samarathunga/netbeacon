@@ -1,0 +1,12 @@
+# Runtime dependencies of NetBeacon.
+# NOTE: simplemonitor is installed separately with --no-deps (see requirements-dev.txt / the workflow),
+# because it declares several heavy optional libraries (boto3, twilio, paramiko, ...) that NetBeacon
+# does not use. NetBeacon ships harmless stand-ins for them (netbeacon/compat.py).
+PySide6-Essentials>=6.6
+arrow>=1.2
+requests>=2.31
+colorlog>=6.7
+psutil>=5.9
+icmplib>=3.0
+Jinja2>=3.1
+MarkupSafe>=2.1
