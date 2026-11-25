@@ -32,7 +32,8 @@ outgrow it you already speak the language of Zabbix, PRTG, Checkmk and friends.
 | **Weekly summary** (new) | Every week, the history turned into sentences: internet drops, outages, flapping, a disk-full forecast, backups, certificates, speed vs. plan, Wi-Fi, new devices. Pop-up, saved copy, optional email. |
 | **Unknown devices + Wake-on-LAN** (new) | New-device alerts can now go to every alert channel (email, Slack, Telegram, ntfy, Pushover), and any device with a known MAC can be woken with a magic packet. |
 | Smarter Quick Start (new) | The wizard can also scan for printers, storage and servers and suggest checks for them, and offers device watching, speed tests, Wi-Fi watching and the weekly summary. |
-| GUI + Windows `.exe` | PySide6 (Qt) interface, light/dark theme, system-tray app, start with Windows. Built into a single `NetBeacon.exe` by the included GitHub workflow. |
+| **Themes** (new in 1.2) | 8 themes - Light, Dark, Paper, Mint, Arctic, Dusk, Forest, High contrast - plus *Match Windows* (follows the Windows light/dark setting live) and 8 accent colours. Changes apply instantly. |
+| GUI + Windows `.exe` | PySide6 (Qt) interface, themes, system-tray app, start with Windows. Built into a single `NetBeacon.exe` by the included GitHub workflow. |
 
 ### SimpleMonitor features NetBeacon turns into friendly controls
 

@@ -153,7 +153,7 @@ class StatusDelegate(QStyledItemDelegate):
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(option.rect, option.palette.highlight().color().lighter(170) if theme._current == "light" else QColor(theme.palette()["selection"]))
+            painter.fillRect(option.rect, option.palette.highlight().color().lighter(170) if not theme.is_dark() else QColor(theme.palette()["selection"]))
         status = index.data(ROLE_STATUS) or "pending"
         color = QColor(theme.STATUS_COLORS.get(status, "#64748b"))
         text = theme.STATUS_LABELS.get(status, status)
@@ -174,7 +174,7 @@ class StatusDelegate(QStyledItemDelegate):
         painter.drawRoundedRect(r, h / 2, h / 2)
         painter.setBrush(color)
         painter.drawEllipse(QPointF(r.left() + 11, r.center().y()), 4, 4)
-        painter.setPen(color.darker(115) if theme._current == "light" else color.lighter(120))
+        painter.setPen(color.darker(115) if not theme.is_dark() else color.lighter(120))
         painter.drawText(QRectF(r.left() + 20, r.top(), w - 20, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
         painter.restore()
 

@@ -40,6 +40,16 @@ def env(home, app):
     yield ctx, win, app
     core.stop()
     win.close()
+    for t in win.findChildren(__import__("netbeacon.ui.widgets", fromlist=["Task"]).Task):
+        t.cancel()
+        t.wait(5000)
+    win.deleteLater()                 # really dispose of it: a later setStyleSheet must not restyle old windows
+    for w in app.topLevelWidgets():
+        if w is not win and not w.isVisible():
+            w.deleteLater()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)   # processEvents() alone skips deferred deletes
+    app.processEvents()
     hist.close()
 
 
@@ -425,3 +435,44 @@ def test_wizard_extras_and_device_suggestions(env):
     assert printer.depends == [ctx.store.by_name("Router").id]
     assert ctx.store.get("speed_enabled") and ctx.store.get("speed_paid_down") == 200 and ctx.store.get("digest_enabled")
     assert not config_writer.build(ctx.store).problems
+
+
+# ======================================================================= 1.2 themes
+def test_every_theme_and_accent_builds(env):
+    ctx, win, app = env
+    from netbeacon.ui import theme as th
+    keys = ("bg", "card", "text", "muted", "border", "accent", "accent_text", "sidebar", "sidebar_text", "sidebar_hover",
+            "sidebar_active", "input", "banner", "banner_border", "banner_text", "row_alt", "selection", "code_bg", "danger_bg")
+    for key, _label, _dark in th.THEMES:
+        if key != "system":
+            assert set(th.PALETTES[key]) == set(keys), key
+        win.apply_theme(key)
+        assert th.choice() == key and th.palette()["accent"].startswith("#")
+        assert th.stylesheet(th.resolve(key))
+    for accent, _n in th.ACCENTS:             # accents are pure maths on the palette - no restyle needed
+        th.set_current("dusk", accent)
+        p = th.palette()
+        assert p["accent"].startswith("#") and (not accent or p["sidebar_active"] == accent)
+        assert accent in th.stylesheet("dusk") if accent else True
+    assert th.resolve("system") in ("light", "dark")
+    ctx.store.settings["accent"] = ""
+    win.apply_theme("light")
+
+
+def test_settings_theme_applies_live(env):
+    ctx, win, app = env
+    from netbeacon.ui import theme as th
+    page = win.pages["settings"]
+    page.theme.setCurrentIndex(page.theme.findData("dusk"))
+    page._preview_timer.stop(); page._preview()
+    assert th.choice() == "dusk" and th.is_dark() and ctx.store.get("theme") == "dusk"
+    page.accent.setCurrentIndex(page.accent.findData("#ea580c"))
+    page._preview_timer.stop(); page._preview()
+    assert ctx.store.get("accent") == "#ea580c" and th.palette()["sidebar_active"] == "#ea580c"
+    assert "#ea580c" in app.styleSheet()
+    page.load()
+    assert page.theme.currentData() == "dusk" and page.accent.currentData() == "#ea580c"
+    page.theme.setCurrentIndex(page.theme.findData("light"))
+    page.accent.setCurrentIndex(0)
+    page._preview_timer.stop(); page._preview()
+    assert th.choice() == "light" and not th.is_dark()

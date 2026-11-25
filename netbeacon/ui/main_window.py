@@ -173,6 +173,10 @@ class MainWindow(QMainWindow):
         ctx.theme_changed.connect(self.apply_theme)
 
         self._tray = self._make_tray()
+        try:   # "Match Windows": follow light/dark changes live (Qt 6.5+)
+            QApplication.instance().styleHints().colorSchemeChanged.connect(self._system_scheme_changed)
+        except (AttributeError, RuntimeError):
+            pass
         self._tick = QTimer(self)
         self._tick.timeout.connect(self._update_engine_label)
         self._tick.start(1000)
@@ -277,13 +281,17 @@ class MainWindow(QMainWindow):
             self._watch_timer.stop()
 
     def apply_theme(self, name: str) -> None:
-        theme.set_current(name)
+        name = theme.set_current(name, self.ctx.store.get("accent", ""))
         app = QApplication.instance()
         theme.apply_palette(app, name)
         app.setStyleSheet(theme.stylesheet(name))
         for p in self.pages.values():
             p.retheme()
         self.pages["dashboard"]._refresh_events()
+
+    def _system_scheme_changed(self, *_a) -> None:
+        if theme.choice() == "system":
+            self.apply_theme("system")
 
     # ------------------------------------------------------------------ engine feedback
     def _on_snapshot(self, rows: list[dict]) -> None:

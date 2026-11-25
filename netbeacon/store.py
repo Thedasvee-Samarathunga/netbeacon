@@ -22,7 +22,8 @@ ST_UP, ST_DOWN, ST_SKIPPED, ST_RETRY = 0, 1, 2, 3
 DEFAULT_SETTINGS: dict[str, Any] = {
     "interval": 30,                 # seconds between rounds of checks
     "retention_days": 30,
-    "theme": "light",               # light | dark
+    "theme": "light",               # see ui/theme.py THEMES ("system" follows Windows)
+    "accent": "",                   # optional accent colour laid over the theme ("" = theme default)
     "teaching_mode": True,          # show explanations everywhere
     "minimize_to_tray": True,
     "start_with_windows": False,

@@ -8,15 +8,62 @@ import time
 import zipfile
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QRectF, QSize, Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
                                QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from ... import __version__, config_writer, paths
 from .. import system
+from .. import theme as theme_mod
 from ..widgets import HelpText, InfoBanner, PageHeader, label, make_button
 from .base import Page
+
+
+def _theme_icon(key: str) -> QIcon:
+    """A tiny preview: sidebar strip, page background, a card and the accent."""
+    if key == "system":
+        left, right = theme_mod.PALETTES["light"], theme_mod.PALETTES["dark"]
+    else:
+        left = right = theme_mod.PALETTES[key]
+    pm = QPixmap(46, 18)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QColor(left["border"]))
+    p.setBrush(QColor(left["bg"]))
+    p.drawRoundedRect(QRectF(0.5, 0.5, 45, 17), 4, 4)
+    if right is not left:
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(right["bg"]))
+        p.drawRect(QRectF(23, 1, 22, 16))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(left["sidebar"]))
+    p.drawRect(QRectF(1, 1, 9, 16))
+    p.setBrush(QColor(left["card"]))
+    p.drawRoundedRect(QRectF(13, 4, 13, 10), 2, 2)
+    p.setBrush(QColor(right["card"]))
+    p.drawRoundedRect(QRectF(28, 4, 9, 10), 2, 2)
+    p.setBrush(QColor(right["accent"]))
+    p.drawEllipse(QRectF(39, 6, 5, 5))
+    p.end()
+    return QIcon(pm)
+
+
+def _accent_icon(color: str) -> QIcon:
+    pm = QPixmap(16, 16)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if color:
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(color))
+    else:
+        p.setPen(QColor("#94a3b8"))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+    p.drawEllipse(QRectF(2, 2, 12, 12))
+    p.end()
+    return QIcon(pm)
 
 
 def _wrap(w: QWidget, help_text: str = "") -> QWidget:
@@ -67,9 +114,22 @@ class SettingsPage(Page):
         af = QFormLayout(a)
         af.setVerticalSpacing(8)
         self.theme = QComboBox()
-        self.theme.addItem("Light", "light")
-        self.theme.addItem("Dark", "dark")
-        af.addRow("Theme", self.theme)
+        for key, text, _dark in theme_mod.THEMES:
+            self.theme.addItem(_theme_icon(key), text, key)
+        self.theme.setIconSize(QSize(46, 18))
+        af.addRow("Theme", _wrap(self.theme, "Changes apply straight away. <i>Match Windows</i> follows Settings &gt; Personalisation &gt; Colours."))
+        self.accent = QComboBox()
+        for color, text in theme_mod.ACCENTS:
+            self.accent.addItem(_accent_icon(color), text, color)
+        af.addRow("Accent colour", _wrap(self.accent, "Buttons, highlights and the selected page in the sidebar. <i>Theme default</i> uses each theme's own colour."))
+        # debounced: arrowing through the list restyles once, not on every step
+        from PySide6.QtCore import QTimer
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(250)
+        self._preview_timer.timeout.connect(self._preview)
+        self.theme.currentIndexChanged.connect(lambda _i: self._preview_timer.start())
+        self.accent.currentIndexChanged.connect(lambda _i: self._preview_timer.start())
         self.teaching = QCheckBox("Teaching mode: show explanations on every page")
         af.addRow("", _wrap(self.teaching, "Turn this off when you know your way around: the blue boxes and grey help text disappear. Lessons stay available under Learn."))
         self.tray = QCheckBox("Keep running in the system tray when I close the window")
@@ -171,7 +231,10 @@ class SettingsPage(Page):
         s = self.ctx.store
         self.interval.setValue(int(s.get("interval", 30)))
         self.retention.setValue(int(s.get("retention_days", 30)))
-        self.theme.setCurrentIndex(max(0, self.theme.findData(s.get("theme", "light"))))
+        for box, key, default in ((self.theme, "theme", "light"), (self.accent, "accent", "")):
+            box.blockSignals(True)
+            box.setCurrentIndex(max(0, box.findData(s.get(key, default))))
+            box.blockSignals(False)
         self.teaching.setChecked(bool(s.get("teaching_mode", True)))
         self.tray.setChecked(bool(s.get("minimize_to_tray", True)))
         self.autostart.setChecked(system.is_autostart() if system.autostart_supported() else bool(s.get("start_with_windows")))
@@ -185,9 +248,9 @@ class SettingsPage(Page):
 
     def save(self) -> None:
         s = self.ctx.store
-        old_theme = s.get("theme")
         s.settings.update({
             "interval": self.interval.value(), "retention_days": self.retention.value(), "theme": self.theme.currentData(),
+            "accent": self.accent.currentData() or "",
             "teaching_mode": self.teaching.isChecked(), "minimize_to_tray": self.tray.isChecked(),
             "start_with_windows": self.autostart.isChecked(), "start_minimized": self.minimized.isChecked(),
             "scan_watch_enabled": self.watch.isChecked(), "scan_watch_minutes": self.watch_min.value(),
@@ -200,9 +263,15 @@ class SettingsPage(Page):
             self.ctx.toast("Could not change the Windows start-up setting.", "error")
         self.ctx.apply_changes()
         self.ctx.settings_changed.emit()
-        if old_theme != s.get("theme"):
-            self.ctx.theme_changed.emit(s.get("theme"))
         self.ctx.toast("Settings saved.", "ok")
+
+    def _preview(self) -> None:
+        """Apply the theme straight away (and remember it - no need to press Save for looks)."""
+        s = self.ctx.store
+        s.settings["theme"] = self.theme.currentData()
+        s.settings["accent"] = self.accent.currentData() or ""
+        s.save()
+        self.ctx.theme_changed.emit(s.settings["theme"])
 
     def _browse_status(self) -> None:
         p = QFileDialog.getExistingDirectory(self, "Folder for the status page", self.sp_folder.text() or str(paths.status_page_dir()))

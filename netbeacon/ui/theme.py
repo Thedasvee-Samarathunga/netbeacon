@@ -22,18 +22,103 @@ PALETTES = {
                  accent_text="#ffffff", sidebar="#0a0f1a", sidebar_text="#aab6c8", sidebar_hover="#152036",
                  sidebar_active="#2f6ff0", input="#0f1828", banner="#13264a", banner_border="#26457f", banner_text="#bcd3ff",
                  row_alt="#131d2f", selection="#1e3a6e", code_bg="#0f1828", danger_bg="#3a1618"),
+    # ---- extra themes (1.2)
+    "paper": dict(bg="#f6f1e7", card="#fffdf8", text="#3b3326", muted="#857a66", border="#e6dccb", accent="#b45309",
+                  accent_text="#ffffff", sidebar="#3b3326", sidebar_text="#e9dfcc", sidebar_hover="#4d4333",
+                  sidebar_active="#b45309", input="#fffdf8", banner="#fbefd9", banner_border="#f0d3a1", banner_text="#7c3d07",
+                  row_alt="#faf6ee", selection="#f6e3c3", code_bg="#f3ecdf", danger_bg="#fdf0ec"),
+    "mint": dict(bg="#eef6f3", card="#ffffff", text="#1b2e2a", muted="#5f7671", border="#d5e6e0", accent="#0d9488",
+                 accent_text="#ffffff", sidebar="#123430", sidebar_text="#c5e0da", sidebar_hover="#1b4741",
+                 sidebar_active="#0d9488", input="#ffffff", banner="#dff3ee", banner_border="#a7dccf", banner_text="#0b4f48",
+                 row_alt="#f5faf8", selection="#cdeee6", code_bg="#e9f3f0", danger_bg="#fdf0f0"),
+    "arctic": dict(bg="#2e3440", card="#3b4252", text="#eceff4", muted="#a3adbf", border="#4c566a", accent="#88c0d0",
+                   accent_text="#2e3440", sidebar="#242933", sidebar_text="#d8dee9", sidebar_hover="#3b4252",
+                   sidebar_active="#5e81ac", input="#2e3440", banner="#344155", banner_border="#4f6a8a", banner_text="#d8e6f3",
+                   row_alt="#363d4b", selection="#4b5d78", code_bg="#2e3440", danger_bg="#4a3238"),
+    "dusk": dict(bg="#1d1b2b", card="#27243a", text="#ece8f7", muted="#a49dbd", border="#3a3554", accent="#a78bfa",
+                 accent_text="#1d1b2b", sidebar="#15131f", sidebar_text="#c9c1e3", sidebar_hover="#2a2640",
+                 sidebar_active="#7c3aed", input="#1f1c2e", banner="#2e2550", banner_border="#51408f", banner_text="#ddd2ff",
+                 row_alt="#232034", selection="#40336e", code_bg="#1f1c2e", danger_bg="#43202c"),
+    "forest": dict(bg="#121a16", card="#1a2620", text="#e3eee7", muted="#93ab9c", border="#2b3c33", accent="#4ade80",
+                   accent_text="#0f1a14", sidebar="#0c120f", sidebar_text="#b4cbbd", sidebar_hover="#1b2a22",
+                   sidebar_active="#16a34a", input="#141e19", banner="#183323", banner_border="#2c6142", banner_text="#c4f0d4",
+                   row_alt="#16211b", selection="#25503a", code_bg="#141e19", danger_bg="#3a1a1c"),
+    "contrast": dict(bg="#000000", card="#0a0a0a", text="#ffffff", muted="#d4d4d4", border="#ffffff", accent="#ffd400",
+                     accent_text="#000000", sidebar="#000000", sidebar_text="#ffffff", sidebar_hover="#262626",
+                     sidebar_active="#1d4ed8", input="#000000", banner="#0a0a0a", banner_border="#ffd400", banner_text="#ffffff",
+                     row_alt="#141414", selection="#1d4ed8", code_bg="#1a1a1a", danger_bg="#3a0000"),
 }
 
+# (key, label, is_dark) in the order shown in Settings. "system" follows Windows' light/dark setting.
+THEMES = [("system", "Match Windows (light or dark)", None), ("light", "Light", False), ("dark", "Dark", True),
+          ("paper", "Paper (warm light)", False), ("mint", "Mint (fresh light)", False), ("arctic", "Arctic (cool dark)", True),
+          ("dusk", "Dusk (purple dark)", True), ("forest", "Forest (green dark)", True), ("contrast", "High contrast", True)]
+DARK = {k for k, _l, d in THEMES if d}
+
+# Accent colours that can be laid over any theme ("" = the theme's own accent)
+ACCENTS = [("", "Theme default"), ("#2563eb", "Blue"), ("#0d9488", "Teal"), ("#16a34a", "Green"), ("#7c3aed", "Purple"),
+           ("#db2777", "Pink"), ("#dc2626", "Red"), ("#ea580c", "Orange"), ("#ca8a04", "Gold")]
+
 _current = "light"
+_choice = "light"            # what the user picked (may be "system")
+_accent = ""
+
+
+def system_is_dark() -> bool:
+    """Windows' 'Choose your app mode' setting (Qt 6.5+ reads it for us)."""
+    try:
+        from PySide6.QtGui import QGuiApplication
+        app = QGuiApplication.instance()
+        if app is not None:
+            return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def resolve(name: str) -> str:
+    if name == "system":
+        return "dark" if system_is_dark() else "light"
+    return name if name in PALETTES else "light"
+
+
+def _mix(a: str, b: str, t: float) -> str:
+    ca, cb = QColor(a), QColor(b)
+    return QColor(int(ca.red() + (cb.red() - ca.red()) * t), int(ca.green() + (cb.green() - ca.green()) * t),
+                  int(ca.blue() + (cb.blue() - ca.blue()) * t)).name()
 
 
 def palette(name: str | None = None) -> dict:
-    return PALETTES[name or _current]
+    p = dict(PALETTES[resolve(name or _current)])
+    if _accent:
+        dark = resolve(name or _current) in DARK
+        acc = QColor(_accent)
+        p["accent"] = acc.lighter(130).name() if dark else _accent
+        p["sidebar_active"] = _accent
+        p["accent_text"] = "#000000" if QColor(p["accent"]).lightnessF() > 0.62 else "#ffffff"
+        p["selection"] = _mix(p["card"], _accent, 0.35 if dark else 0.18)
+        p["banner"] = _mix(p["bg"], _accent, 0.18 if dark else 0.08)
+        p["banner_border"] = _mix(p["bg"], _accent, 0.45 if dark else 0.3)
+        p["banner_text"] = _mix(p["text"], _accent, 0.35)
+    return p
 
 
-def set_current(name: str) -> None:
-    global _current
-    _current = name if name in PALETTES else "light"
+def is_dark(name: str | None = None) -> bool:
+    return resolve(name or _current) in DARK
+
+
+def set_current(name: str, accent: str | None = None) -> str:
+    """Remember the user's choice; returns the concrete palette name actually used."""
+    global _current, _choice, _accent
+    _choice = name if (name in PALETTES or name == "system") else "light"
+    _current = resolve(_choice)
+    if accent is not None:
+        _accent = accent if (not accent or QColor(accent).isValid()) else ""
+    return _current
+
+
+def choice() -> str:
+    return _choice
 
 
 def ensure_assets(name: str) -> dict:
@@ -44,7 +129,7 @@ def ensure_assets(name: str) -> dict:
 
     folder = paths.data_dir() / "ui-assets"
     folder.mkdir(parents=True, exist_ok=True)
-    files = {"check": folder / "check.png", "chevron": folder / f"chevron-{name}.png"}
+    files = {"check": folder / "check.png", "chevron": folder / f"chevron-{name}-{palette(name)['muted'].lstrip('#')}.png"}
     if not files["check"].exists():
         pm = QPixmap(32, 32)
         pm.fill(Qt.GlobalColor.transparent)
@@ -66,7 +151,7 @@ def ensure_assets(name: str) -> dict:
         pm.fill(Qt.GlobalColor.transparent)
         pt = QPainter(pm)
         pt.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(PALETTES[name]["muted"]), 3.4)
+        pen = QPen(QColor(palette(name)["muted"]), 3.4)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         pt.setPen(pen)
@@ -81,7 +166,7 @@ def ensure_assets(name: str) -> dict:
 
 
 def stylesheet(name: str) -> str:
-    p = PALETTES[name]
+    p = palette(name)
     a = ensure_assets(name)
     return f"""
 * {{ font-family: "Segoe UI", "Inter", "Noto Sans", "Helvetica Neue", Arial, sans-serif; font-size: 10pt; }}
@@ -159,13 +244,13 @@ QScrollArea#navscroll, QWidget#navhost {{ background: transparent; border: none;
 QFrame#sidebar QScrollBar:vertical {{ width: 6px; }}
 QPushButton#nav:hover {{ background: {p['sidebar_hover']}; color: white; }}
 QPushButton#nav:checked {{ background: {p['sidebar_active']}; color: white; font-weight: 600; }}
-QFrame#sidebar QPushButton[kind="side"] {{ background: {p['sidebar_hover']}; color: white; border: 1px solid #334155; padding: 6px 10px; }}
+QFrame#sidebar QPushButton[kind="side"] {{ background: {p['sidebar_hover']}; color: white; border: 1px solid {p['sidebar_hover']}; padding: 6px 10px; }}
 QFrame#sidebar QPushButton[kind="side"]:hover {{ border-color: {p['sidebar_active']}; }}
 """
 
 
 def html_css(name: str) -> str:
-    p = PALETTES[name]
+    p = palette(name)
     return (f"body {{ color:{p['text']}; }} h2 {{ margin-top:0; }} h3 {{ margin-bottom:2px; }} a {{ color:{p['accent']}; }} "
             f"code {{ background:{p['code_bg']}; padding:1px 4px; }} "
             f"table {{ border-collapse: collapse; }} th {{ text-align:left; background:{p['code_bg']}; padding:5px 10px; }} "
@@ -220,7 +305,7 @@ def apply_palette(app, name: str) -> None:
     """Fusion + matching QPalette so native bits (check marks, spin arrows) look right in both themes."""
     from PySide6.QtGui import QPalette
 
-    p = PALETTES[name]
+    p = palette(name)
     pal = QPalette()
     pal.setColor(QPalette.ColorRole.Window, QColor(p["bg"]))
     pal.setColor(QPalette.ColorRole.WindowText, QColor(p["text"]))

@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     store = Store()
-    theme.set_current(store.get("theme", "light"))
+    theme.set_current(store.get("theme", "light"), store.get("accent", ""))
     theme.apply_palette(app, theme._current)
     app.setStyleSheet(theme.stylesheet(theme._current))
     hub.set(bool(store.get("teaching_mode", True)))

@@ -24,7 +24,7 @@
 | **Alerts** | Channels, rules (how many failures, repeat, recovery, quiet hours) and test buttons. |
 | **Activity & logs** | Event diary, the SimpleMonitor engine log, and the generated config files. |
 | **Learn** | 15 short lessons, glossary and guided practice. |
-| **Settings** | Interval, history length, theme, teaching mode, tray/startup, status web page, backup/export. |
+| **Settings** | Interval, history length, theme and accent colour (applied instantly), teaching mode, tray/startup, status web page, backup/export. |
 
 ## 3. Choosing good settings
 
