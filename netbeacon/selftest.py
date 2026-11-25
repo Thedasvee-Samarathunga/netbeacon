@@ -60,7 +60,14 @@ def run(outfile: str) -> int:
         page = os.path.join(home, "status", "index.html")
         step("HTML status page written", os.path.exists(page) and "Local port" in open(page, encoding="utf-8", errors="replace").read(), page)
         import simplemonitor.Monitors.monitor as mm
-        step("custom monitors registered", all(t in mm.all_types() for t in ("lan_ping", "lan_tcp", "lan_http", "lan_dns")))
+        step("custom monitors registered", all(t in mm.all_types() for t in ("lan_ping", "lan_tcp", "lan_http", "lan_dns", "lan_wifi")))
+        from . import diagnose, digest, speedtest, wifi  # noqa: F401  (the 1.1 modules must be bundled)
+        st_w = wifi.parse_interfaces("    Name : Wi-Fi\n    State : connected\n    SSID : Test\n    Signal : 80%\n    Channel : 6\n")
+        step("Wi-Fi parser works", st_w.connected and st_w.signal == 80 and st_w.band == "2.4 GHz")
+        dg = digest.build(store, hist, time.time() - 86400)
+        step("weekly summary builds", bool(dg.headline) and "<h2" in dg.html(), dg.headline)
+        from .netutil import magic_packet
+        step("Wake-on-LAN packet builds", len(magic_packet("00:11:22:33:44:55")) == 102)
         step("html logger available", "html" in __import__("simplemonitor.Loggers.logger", fromlist=["x"]).all_types())
         hist.close()
 

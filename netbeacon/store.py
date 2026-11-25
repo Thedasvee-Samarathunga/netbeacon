@@ -36,6 +36,25 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "scan_watch_minutes": 60,
     "scan_cidr": "",
     "devices_baseline_done": False,
+    "new_device_all_channels": True,  # also send "new device" alerts to email/phone channels, not just the pop-up
+    "last_gateway": "",
+    # internet speed tests
+    "speed_enabled": False,
+    "speed_every_hours": 6,
+    "speed_paid_down": 0.0,         # Mbit/s the plan promises (0 = unknown)
+    "speed_paid_up": 0.0,
+    "speed_max_down_mb": 25,        # data used per test is capped by these
+    "speed_max_up_mb": 10,
+    "speed_server": "https://speed.cloudflare.com",
+    "last_speedtest_ts": 0.0,
+    # Wi-Fi
+    "wifi_sample_enabled": True,
+    # weekly summary
+    "digest_enabled": True,
+    "digest_weekday": 0,            # 0 = Monday
+    "digest_hour": 9,
+    "digest_email": False,
+    "last_digest_ts": 0.0,
     "channels": {
         "desktop": {"enabled": True},
         "email": {"enabled": False, "host": "", "port": 587, "ssl": "starttls", "username": "", "password": "", "from": "", "to": ""},
@@ -245,6 +264,14 @@ class History:
                 key TEXT PRIMARY KEY, mac TEXT, ip TEXT, hostname TEXT, name TEXT, notes TEXT,
                 first_seen REAL, last_seen REAL, known INTEGER DEFAULT 0);
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE IF NOT EXISTS speedtests(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, down REAL, up REAL, latency REAL, jitter REAL,
+                server TEXT, error TEXT);
+            CREATE INDEX IF NOT EXISTS idx_speed_ts ON speedtests(ts);
+            CREATE TABLE IF NOT EXISTS wifi(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, ssid TEXT, bssid TEXT, signal INTEGER,
+                channel INTEGER, band TEXT, rx REAL, tx REAL);
+            CREATE INDEX IF NOT EXISTS idx_wifi_ts ON wifi(ts);
             """)
 
     def close(self) -> None:
@@ -394,6 +421,9 @@ class History:
         self._x("DELETE FROM results WHERE ts<?", (cutoff,))
         self._x("DELETE FROM events WHERE ts<?", (cutoff,))
         self._x("DELETE FROM incidents WHERE ended IS NOT NULL AND ended<?", (cutoff,))
+        self._x("DELETE FROM wifi WHERE ts<?", (cutoff,))
+        # speed tests are few and small: keep at least a year of them as evidence for your provider
+        self._x("DELETE FROM speedtests WHERE ts<?", (time.time() - max(365, retention_days) * 86400,))
 
     def rename_monitor(self, old: str, new: str) -> None:
         for table in ("results", "incidents", "events"):
@@ -404,7 +434,7 @@ class History:
             self._x(f"DELETE FROM {table} WHERE monitor=?", (monitor,))
 
     def clear_all(self) -> None:
-        for table in ("results", "incidents", "events"):
+        for table in ("results", "incidents", "events", "speedtests", "wifi"):
             self._x(f"DELETE FROM {table}")
 
     def export_csv(self, path: str, monitor: Optional[str], since: float) -> int:
@@ -424,6 +454,31 @@ class History:
                             "" if r["latency"] is None else f"{r['latency']:.1f}", r["message"]])
                 n += 1
         return n
+
+    # ----- speed tests
+    def add_speedtest(self, ts: float, down: Optional[float], up: Optional[float], latency: Optional[float],
+                      jitter: Optional[float], server: str, error: str = "") -> None:
+        self._x("INSERT INTO speedtests(ts,down,up,latency,jitter,server,error) VALUES(?,?,?,?,?,?,?)",
+                (ts, down, up, latency, jitter, server, (error or "")[:300]))
+
+    def speedtests(self, since: float = 0, limit: int = 2000) -> list[dict]:
+        rows = self._all("SELECT * FROM speedtests WHERE ts>=? ORDER BY ts DESC LIMIT ?", (since, limit))
+        return [dict(r) for r in rows]
+
+    # ----- Wi-Fi samples
+    def add_wifi_sample(self, ts: float, ssid: str, bssid: str, signal: Optional[int], channel: Optional[int],
+                        band: str, rx: Optional[float], tx: Optional[float]) -> None:
+        self._x("INSERT INTO wifi(ts,ssid,bssid,signal,channel,band,rx,tx) VALUES(?,?,?,?,?,?,?,?)",
+                (ts, ssid, bssid, signal, channel, band, rx, tx))
+
+    def wifi_samples(self, since: float = 0, limit: int = 20000) -> list[dict]:
+        rows = self._all("SELECT * FROM wifi WHERE ts>=? ORDER BY ts LIMIT ?", (since, limit))
+        return [dict(r) for r in rows]
+
+    def results_for(self, monitor: str, since: float, limit: int = 50000) -> list[dict]:
+        rows = self._all("SELECT ts, status, latency, message FROM results WHERE monitor=? AND ts>=? ORDER BY ts LIMIT ?",
+                         (monitor, since, limit))
+        return [dict(r) for r in rows]
 
     # ----- devices
     @staticmethod

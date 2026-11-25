@@ -22,6 +22,7 @@ class AppContext(QObject):
     navigate = Signal(str)
     toast_requested = Signal(str, str)
     theme_changed = Signal(str)
+    devices_changed = Signal()          # a scan finished or a device was renamed / marked known
 
     def __init__(self, store: Store, history: History, core: EngineCore) -> None:
         super().__init__()

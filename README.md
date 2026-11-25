@@ -23,8 +23,15 @@ outgrow it you already speak the language of Zabbix, PRTG, Checkmk and friends.
 | Running services | **Services & programs** page: Windows services, running programs and listening ports of this PC - one click turns any of them into a check. |
 | Uptime and downtime | **Uptime & history** page: availability %, downtime, incidents (start, end, reason), MTTR, response-time chart, SLA explainer, CSV export and a shareable **HTML report**. |
 | ...and more | Website checks (status code, text match, speed), **TLS certificate expiry**, DNS (system resolver or a specific server), disk space, memory, CPU, **backup freshness**, run-any-command, combined (compound) checks, a **practice check that fails on purpose**. |
-| Teaching | Every page has a hint box, every field has help text, each check type has *What is this / Why use it / Under the hood* tabs, a 14-lesson **Learn** section with glossary, guided practice, and a **"graduation guide"** to bigger tools. Switch it all off in *Settings* when you no longer need it. |
+| Teaching | Every page has a hint box, every field has help text, each check type has *What is this / Why use it / Under the hood* tabs, a 15-lesson **Learn** section with glossary, guided practice, and a **"graduation guide"** to bigger tools. Switch it all off in *Settings* when you no longer need it. |
 | Alerts | Desktop pop-up, email (SMTP), Slack, Telegram, ntfy, Pushover - with *test* buttons, tolerance, repeat, recovery messages, quiet hours. |
+| **What's wrong?** (new in 1.1) | One button (Dashboard, sidebar, tray, or right-click a check) tests the chain *this PC -> Wi-Fi -> router -> internet -> DNS -> web -> the check* and says in one sentence where it breaks, what to do, and what it ruled out. Copy the report for your IT person or provider. |
+| **Network map** (new) | Router in the middle, every known device around it, coloured by its checks (or NEW / not monitored / not seen). Click a device to monitor it, scan its ports, name it or wake it. |
+| **Internet speed** (new) | Scheduled speed tests (latency, jitter, download, upload) with history, a chart against the speed you pay for, CSV export and a capped data budget. |
+| **Wi-Fi health** (new) | Signal (% and dBm), band, channel, link speed and access point from Windows' `netsh`; signal history; nearby networks; 2.4 GHz channel crowding; plain-English advice; a *Wi-Fi signal* check type. |
+| **Weekly summary** (new) | Every week, the history turned into sentences: internet drops, outages, flapping, a disk-full forecast, backups, certificates, speed vs. plan, Wi-Fi, new devices. Pop-up, saved copy, optional email. |
+| **Unknown devices + Wake-on-LAN** (new) | New-device alerts can now go to every alert channel (email, Slack, Telegram, ntfy, Pushover), and any device with a known MAC can be woken with a magic packet. |
+| Smarter Quick Start (new) | The wizard can also scan for printers, storage and servers and suggest checks for them, and offers device watching, speed tests, Wi-Fi watching and the weekly summary. |
 | GUI + Windows `.exe` | PySide6 (Qt) interface, light/dark theme, system-tray app, start with Windows. Built into a single `NetBeacon.exe` by the included GitHub workflow. |
 
 ### SimpleMonitor features NetBeacon turns into friendly controls
@@ -61,7 +68,7 @@ The *Export* feature maps them back to stock monitors where an equivalent exists
 
 ## Get the Windows .exe (GitHub Actions)
 
-1. Create a new GitHub repository and upload this whole folder (keep the `.github/workflows/build-windows.yml` path exactly).
+1. Create a new GitHub repository and upload this whole folder (keep the `.github/workflows/build.yml` path exactly).
 2. Push to `main`. The **Build NetBeacon for Windows** workflow starts by itself (see the *Actions* tab). It
    installs everything, runs the tests, builds the `.exe`, **launches the finished `.exe` with `--selftest`** (real engine + every screen) and uploads it.
 3. When the run is green, get the files in **either** place:
@@ -106,6 +113,11 @@ netbeacon/
   store.py          settings + checks (JSON) and history (SQLite)
   netutil.py        ping, TCP, DNS client, ARP, network scan, port scan, services
   knowledge.py      all teaching content (tips, glossary, lessons, port explanations)
+  diagnose.py       'What's wrong?' - step-by-step root-cause diagnosis (no Qt, probes are swappable for tests)
+  speedtest.py      latency / download / upload test against a configurable server
+  wifi.py           reads and explains `netsh wlan` output (signal, channel, neighbours, advice)
+  digest.py         the weekly plain-English summary, incl. the disk-full forecast and the schedule
+  notify.py         one-off messages through every alert channel + formatted email
   devices.py reports.py selftest.py app.py
   ui/               PySide6 interface (main window, pages, check dialog, wizard, theme)
 tests/              pytest: engine end-to-end with local servers, GUI tests off-screen
@@ -122,6 +134,10 @@ More: [User guide](docs/USER_GUIDE.md) - [Architecture & extending](docs/ARCHITE
   and forward results to a central instance (a SimpleMonitor feature - see its docs).
 * Monitoring only happens while NetBeacon runs (tray icon + *start with Windows* are provided). For 24/7 headless monitoring use *Export for stock SimpleMonitor* on an always-on machine.
 * Passwords/tokens for alert channels are stored unencrypted in your user profile. Use app passwords or tokens.
+* The speed test's default server is Cloudflare's public speed-test service (`/__down` and `/__up`). You can point it at any server that answers those two addresses. Results from Wi-Fi PCs mostly measure the Wi-Fi.
+* Wi-Fi details come from Windows' `netsh wlan`. On recent Windows 11 builds, listing *nearby* networks needs location permission for desktop apps; NetBeacon says so when Windows refuses.
+* Wake-on-LAN must be enabled in the target PC's BIOS/UEFI and adapter settings, and usually only works inside the same network.
+* New-device and weekly-summary messages ignore quiet hours (they are one-off messages, not check alerts).
 * Port and device scans use ordinary connections and ping - no raw packets, no admin rights - which keeps them safe but less thorough than nmap. Scan only networks you are allowed to scan.
 
 ## Licence

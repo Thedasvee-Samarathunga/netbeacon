@@ -32,6 +32,18 @@
 * `EngineCore` never touches Qt; `ui/context.py` converts its callbacks into queued Qt signals. Anything slow in the GUI (scans, test buttons, service lists) runs in a `Task` (QThread).
 * Status words: *up*, *retry* (error count > 0 but within tolerance), *down* (virtual fail count > 0), *skipped* (a dependency is down), *paused*, *error* (bad configuration), *pending*.
 
+## 1.1 modules (all Qt-free and unit-tested)
+
+| Module | What it does | GUI |
+|---|---|---|
+| `diagnose.py` | Ordered probes (PC, Wi-Fi, router, internet, DNS, web, target). `Probes` holds every network call so tests inject failures. `_finish()` picks the first failing *relevant* step (LAN targets ignore internet failures) and writes the verdict. | `ui/diagnose_dialog.py` (steps stream in through `Task.item`) |
+| `speedtest.py` | Median TCP-connect latency + jitter; parallel streamed download / upload, capped by bytes and time. | `ui/pages/speed.py` (schedule timer, history table `speedtests`) |
+| `wifi.py` | Parses `netsh wlan show interfaces` / `show networks mode=bssid` by value shape (%, GHz, 802.11, MAC) so localised Windows works; crowding + advice. | `ui/pages/wifi_page.py` (sampling timer, history table `wifi`), check type `lan_wifi` in `sm_ext.py` |
+| `digest.py` | Sentences from history; merges overlapping internet outages; linear-regression disk forecast; `last_slot()/is_due()` schedule. | `ui/pages/digest_page.py` |
+| `notify.py` | `broadcast()` through SimpleMonitor's alerter classes (time rules stripped), `send_email()` with smtplib. | used by the device watch and the summary |
+
+The network map (`ui/pages/netmap.py`) combines the Devices page's rows, the remembered devices and the dashboard's check statuses, matched by IP / host name.
+
 ## Adding a check type
 
 1. **Engine side** - subclass `Monitor` in `netbeacon/sm_ext.py` and decorate it with `@register_monitor`:

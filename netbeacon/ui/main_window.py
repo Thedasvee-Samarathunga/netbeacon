@@ -6,10 +6,10 @@ from typing import Optional
 
 from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QAction, QCloseEvent
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton, QStackedWidget,
-                               QSystemTrayIcon, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton, QScrollArea,
+                               QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget)
 
-from .. import devices, netutil
+from .. import devices, netutil, notify
 from ..engine import LoopInfo
 from . import theme
 from .context import AppContext
@@ -19,16 +19,23 @@ from .pages.alerts import AlertsPage
 from .pages.checks_page import ChecksPage
 from .pages.dashboard import DashboardPage
 from .pages.devices import DevicesPage
+from .pages.digest_page import DigestPage
 from .pages.learn import LearnPage
+from .pages.netmap import MapPage
 from .pages.ports import PortsPage
 from .pages.services import ServicesPage
 from .pages.settings_page import SettingsPage
+from .pages.speed import SpeedPage
 from .pages.uptime import UptimePage
+from .pages.wifi_page import WifiPage
 from .widgets import Task, hub, make_button
 
-NAV = [("dashboard", "Dashboard"), ("checks", "Checks"), ("devices", "Devices"), ("ports", "Port scanner"),
-       ("services", "Services & programs"), ("uptime", "Uptime & history"), ("alerts", "Alerts"),
+NAV = [("dashboard", "Dashboard"), ("checks", "Checks"),
+       ("devices", "Devices"), ("map", "Network map"), ("ports", "Port scanner"), ("services", "Services & programs"),
+       ("wifi", "Wi-Fi"), ("speed", "Internet speed"),
+       ("uptime", "Uptime & history"), ("digest", "Weekly summary"), ("alerts", "Alerts"),
        ("activity", "Activity & logs"), ("learn", "Learn"), ("settings", "Settings")]
+NAV_GAP_AFTER = ("checks", "services", "speed", "alerts")
 
 
 class Toast(QLabel):
@@ -96,10 +103,20 @@ class MainWindow(QMainWindow):
         brand.addWidget(name)
         brand.addStretch(1)
         sl.addLayout(brand)
-        sl.addSpacing(14)
+        sl.addSpacing(10)
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
         self.nav_buttons: dict[str, QPushButton] = {}
+        nav_scroll = QScrollArea()                  # 14 pages: scrolls instead of squashing on small screens
+        nav_scroll.setObjectName("navscroll")
+        nav_scroll.setWidgetResizable(True)
+        nav_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        nav_host = QWidget()
+        nav_host.setObjectName("navhost")
+        nl = QVBoxLayout(nav_host)
+        nl.setContentsMargins(0, 0, 0, 0)
+        nl.setSpacing(2)
         for key, text in NAV:
             b = QPushButton(text.replace("&", "&&"))
             b.setObjectName("nav")
@@ -108,10 +125,14 @@ class MainWindow(QMainWindow):
             b.clicked.connect(lambda _=False, k=key: self.show_page(k))
             self.nav_group.addButton(b)
             self.nav_buttons[key] = b
-            sl.addWidget(b)
-            if key in ("checks", "services", "alerts"):
-                sl.addSpacing(8)
-        sl.addStretch(1)
+            nl.addWidget(b)
+            if key in NAV_GAP_AFTER:
+                nl.addSpacing(7)
+        nl.addStretch(1)
+        nav_scroll.setWidget(nav_host)
+        sl.addWidget(nav_scroll, 1)
+        self.diag_btn = make_button("What's wrong?", "side", "Check the connection step by step and find where it breaks.")
+        sl.addWidget(self.diag_btn)
         self.engine_label = QLabel("Starting...")
         self.engine_label.setWordWrap(True)
         sl.addWidget(self.engine_label)
@@ -130,12 +151,15 @@ class MainWindow(QMainWindow):
             "dashboard": DashboardPage(ctx), "checks": ChecksPage(ctx), "devices": DevicesPage(ctx), "ports": PortsPage(ctx),
             "services": ServicesPage(ctx), "uptime": UptimePage(ctx), "alerts": AlertsPage(ctx), "activity": ActivityPage(ctx),
             "learn": LearnPage(ctx), "settings": SettingsPage(ctx),
+            "wifi": WifiPage(ctx), "speed": SpeedPage(ctx), "digest": DigestPage(ctx),
         }
+        self.pages["map"] = MapPage(ctx)            # last: it reads the devices and dashboard pages
         for key, _ in NAV:
             self.stack.addWidget(self.pages[key])
 
         self.toast = Toast(central)
         self.now_btn.clicked.connect(ctx.core.check_now)
+        self.diag_btn.clicked.connect(lambda: self.diagnose())
         self.pause_btn.clicked.connect(self._toggle_pause)
 
         # ---- signals
@@ -191,6 +215,53 @@ class MainWindow(QMainWindow):
         m = self.ctx.store.by_id(monitor_id)
         if m:
             MonitorDialog(self.ctx, self, edit=m).exec()
+
+    def diagnose(self, monitor_id: Optional[str] = None) -> None:
+        """Open the 'What's wrong?' window, optionally for one check."""
+        from .diagnose_dialog import DiagnoseDialog
+        m = self.ctx.store.by_id(monitor_id) if monitor_id else None
+        if not self.isVisible():
+            self._restore()
+        DiagnoseDialog(self.ctx, self, check=m).exec()
+
+    def wake_device(self, mac: str, label_: str = "") -> bool:
+        """Send a Wake-on-LAN packet and say what happened."""
+        try:
+            sent = netutil.wake_on_lan(mac)
+        except (ValueError, OSError) as exc:
+            self.toast.show_message(f"Could not send the wake-up packet: {exc}", "error")
+            return False
+        who = label_ or mac
+        self.ctx.history.add_event(time.time(), "info", None, f"Wake-on-LAN packet sent to {who} ({mac}) via {', '.join(sent)}")
+        self.toast.show_message(f"Wake-up packet sent to {who}. A sleeping PC takes 10-60 seconds to appear. "
+                                "Nothing happening? Wake-on-LAN must be switched on in that PC's BIOS and network adapter settings.", "ok", 9000)
+        return True
+
+    def baseline_scan(self) -> None:
+        """Scan once, remember every device as 'known', and start watching for newcomers (used by the Quick Start wizard)."""
+        cidr = self.ctx.store.get("scan_cidr") or (netutil.local_networks()[0].cidr if netutil.local_networks() else "")
+        if not cidr:
+            return
+        self.ctx.store.set("scan_cidr", cidr)
+
+        def work(t: Task):
+            return netutil.scan_network(cidr, deep=False, cancel=t.cancel_event)
+
+        task = Task(work, self)
+
+        def done(found) -> None:
+            if found:
+                devices.merge_scan(self.ctx.history, found)
+                gw = next((d.ip for d in found if d.is_gateway), "")
+                if gw:
+                    self.ctx.store.set("last_gateway", gw)
+            self.ctx.history.mark_all_known()
+            self.ctx.store.set("devices_baseline_done", True)
+            self.ctx.devices_changed.emit()
+            self.toast.show_message(f"Learned the {len(found or [])} devices on your network. From now on NetBeacon tells you when a new one appears.", "ok", 8000)
+
+        task.result.connect(done)
+        task.start()
 
     def run_wizard(self) -> None:
         from .wizard import SetupWizard
@@ -291,11 +362,24 @@ class MainWindow(QMainWindow):
         if not found:
             return
         _rows, fresh = devices.merge_scan(self.ctx.history, found)
+        self.ctx.devices_changed.emit()
         if fresh:
-            text = ", ".join(f"{d['ip']} ({d['mac'] or 'unknown MAC'})" for d in fresh[:5])
+            text = ", ".join(f"{d['ip']} ({d['mac'] or 'unknown MAC'}" + (f", {d['kind']}" if d.get("kind") else "") + ")" for d in fresh[:5])
             self.ctx.history.add_event(time.time(), "warn", None, f"New device(s) joined the network: {text}")
             self.ctx.event_added.emit({"ts": time.time(), "level": "warn", "monitor": None, "text": f"New device(s): {text}"})
             self._on_notification("New device on your network", text, "error")
+            if self.ctx.store.get("new_device_all_channels", True):
+                store = self.ctx.store
+                msg = (f"{len(fresh)} unknown device(s) joined your network: {text}. "
+                       "If you recognise them, mark them as known on NetBeacon's Devices page.")
+                t = Task(lambda _t: notify.broadcast(store, "Unknown device on your network", msg, desktop=False), self)
+                t.result.connect(self._broadcast_done)
+                t.start()
+
+    def _broadcast_done(self, results: dict) -> None:
+        failed = {k: v for k, v in (results or {}).items() if v}
+        for ch, err in failed.items():
+            self.ctx.history.add_event(time.time(), "warn", None, f"Could not send the new-device alert via {ch}: {err}")
 
     # ------------------------------------------------------------------ tray
     def _make_tray(self) -> Optional[QSystemTrayIcon]:
@@ -307,9 +391,11 @@ class MainWindow(QMainWindow):
         act_open.triggered.connect(self._restore)
         act_now = QAction("Check everything now", self)
         act_now.triggered.connect(self.ctx.core.check_now)
+        act_diag = QAction("What's wrong? (diagnose my connection)", self)
+        act_diag.triggered.connect(lambda: self.diagnose())
         act_quit = QAction("Quit NetBeacon", self)
         act_quit.triggered.connect(self.quit_app)
-        for a in (act_open, act_now):
+        for a in (act_open, act_now, act_diag):
             menu.addAction(a)
         menu.addSeparator()
         menu.addAction(act_quit)

@@ -154,7 +154,9 @@ QTextBrowser {{ background: {p['card']}; border: 1px solid {p['border']}; border
 QFrame#sidebar {{ background: {p['sidebar']}; }}
 QFrame#sidebar QLabel {{ color: {p['sidebar_text']}; }}
 QFrame#sidebar QLabel#brand {{ color: white; font-size: 14pt; font-weight: 700; }}
-QPushButton#nav {{ background: transparent; color: {p['sidebar_text']}; border: none; border-radius: 8px; padding: 10px 14px; text-align: left; font-size: 10.5pt; }}
+QPushButton#nav {{ background: transparent; color: {p['sidebar_text']}; border: none; border-radius: 8px; padding: 8px 14px; text-align: left; font-size: 10.5pt; }}
+QScrollArea#navscroll, QWidget#navhost {{ background: transparent; border: none; }}
+QFrame#sidebar QScrollBar:vertical {{ width: 6px; }}
 QPushButton#nav:hover {{ background: {p['sidebar_hover']}; color: white; }}
 QPushButton#nav:checked {{ background: {p['sidebar_active']}; color: white; font-weight: 600; }}
 QFrame#sidebar QPushButton[kind="side"] {{ background: {p['sidebar_hover']}; color: white; border: 1px solid #334155; padding: 6px 10px; }}

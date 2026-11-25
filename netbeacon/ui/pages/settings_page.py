@@ -90,6 +90,8 @@ class SettingsPage(Page):
         self.watch_min.setRange(5, 1440)
         self.watch_min.setSuffix(" minutes")
         wf.addRow("Rescan every", self.watch_min)
+        self.watch_all = QCheckBox("Also send new-device alerts to email / phone channels, not just the pop-up")
+        wf.addRow("", _wrap(self.watch_all, "Uses the channels on the Alerts page. Handy when nobody is sitting at this PC."))
         lay.addWidget(w)
 
         # --- status page
@@ -176,6 +178,7 @@ class SettingsPage(Page):
         self.minimized.setChecked(bool(s.get("start_minimized")))
         self.watch.setChecked(bool(s.get("scan_watch_enabled")))
         self.watch_min.setValue(int(s.get("scan_watch_minutes", 60)))
+        self.watch_all.setChecked(bool(s.get("new_device_all_channels", True)))
         self.sp_enable.setChecked(bool(s.get("status_page_enabled")))
         self.sp_folder.setText(str(s.get("status_page_folder", "")))
         self.sp_title.setText(str(s.get("status_page_title", "Network status")))
@@ -188,6 +191,7 @@ class SettingsPage(Page):
             "teaching_mode": self.teaching.isChecked(), "minimize_to_tray": self.tray.isChecked(),
             "start_with_windows": self.autostart.isChecked(), "start_minimized": self.minimized.isChecked(),
             "scan_watch_enabled": self.watch.isChecked(), "scan_watch_minutes": self.watch_min.value(),
+            "new_device_all_channels": self.watch_all.isChecked(),
             "status_page_enabled": self.sp_enable.isChecked(), "status_page_folder": self.sp_folder.text().strip(),
             "status_page_title": self.sp_title.text().strip() or "Network status",
         })

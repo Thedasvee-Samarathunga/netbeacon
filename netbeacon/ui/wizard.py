@@ -4,10 +4,10 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QStackedWidget, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import netutil
+from .. import netutil, wifi
 from ..checks import CHECKS
 from ..store import MonitorDef
 from .widgets import HelpText, Task, label, make_button
@@ -21,20 +21,66 @@ class Suggestion:
         self.box: QCheckBox | None = None
 
 
+def _clear_layout(lay) -> None:
+    """Remove everything from a layout, including widgets inside nested layouts."""
+    while lay.count():
+        it = lay.takeAt(0)
+        if it.widget() is not None:
+            it.widget().deleteLater()
+        elif it.layout() is not None:
+            _clear_layout(it.layout())
+            it.layout().deleteLater()
+
+
+def suggestions_for_devices(found, have: set[str] | None = None, limit: int = 10) -> list[Suggestion]:
+    """Turn a deep scan into check suggestions for the devices a small business cares about."""
+    have = have or set()
+    out: list[Suggestion] = []
+    for d in found:
+        if d.is_self or d.is_gateway:
+            continue
+        name = d.hostname.split(".")[0] if d.hostname else d.ip
+        p = set(d.open_ports)
+        if p & {9100, 515, 631}:
+            out.append(Suggestion(f"dev-{d.ip}-print", f"Printer {name}", "Looks like a printer. A ping check tells you when it drops off the network.",
+                                  "ping", {"host": d.ip}, "Office", tolerance=2, depends_on_router=True))
+        elif p & {5000, 5001}:
+            out.append(Suggestion(f"dev-{d.ip}-nas", f"Storage {name} (web page)", "Looks like a NAS / storage box. Checking its web port catches a hung box, not just a powered-off one.",
+                                  "tcp", {"host": d.ip, "port": 5000 if 5000 in p else 5001}, "Servers", tolerance=1, depends_on_router=True))
+        elif 445 in p and not d.randomized:
+            out.append(Suggestion(f"dev-{d.ip}-smb", f"File sharing on {name}", "This device shares files (port 445). Checking the port catches a stopped file service.",
+                                  "tcp", {"host": d.ip, "port": 445}, "Servers", tolerance=1, depends_on_router=True, checked=False))
+        elif 3389 in p:
+            out.append(Suggestion(f"dev-{d.ip}-rdp", f"Remote Desktop on {name}", "This machine accepts Remote Desktop. Watch it if people work on it remotely.",
+                                  "tcp", {"host": d.ip, "port": 3389}, "Servers", tolerance=1, depends_on_router=True, checked=False))
+        elif 554 in p:
+            out.append(Suggestion(f"dev-{d.ip}-cam", f"Camera {name}", "Looks like a camera or video recorder. A ping check tells you when it goes offline.",
+                                  "ping", {"host": d.ip}, "Office", tolerance=2, depends_on_router=True, checked=False))
+    return [s for s in out if s.key not in have][:limit]
+
+
 class SetupWizard(QDialog):
     def __init__(self, ctx, parent=None) -> None:
         super().__init__(parent)
         self.ctx = ctx
         self.setWindowTitle("Quick Start")
-        self.resize(760, 620)
+        self.resize(780, 680)
         self.suggestions: list[Suggestion] = []
         self._task: Task | None = None
+        self._scan_task: Task | None = None
+        self.wifi_status: wifi.WifiStatus | None = None
+        self.gateway: str | None = None
+        self.scan_note = ""
         lay = QVBoxLayout(self)
         self.stack = QStackedWidget()
         lay.addWidget(self.stack, 1)
         self.stack.addWidget(self._page_welcome())
         self.page2 = QWidget()
-        self.stack.addWidget(self.page2)
+        self.page2_scroll = QScrollArea()
+        self.page2_scroll.setWidgetResizable(True)
+        self.page2_scroll.setWidget(self.page2)
+        self.stack.addWidget(self.page2_scroll)
+        self.stack.addWidget(self._page_extras())
         self.stack.addWidget(self._page_alerts())
         nav = QHBoxLayout()
         self.back = make_button("Back")
@@ -75,6 +121,56 @@ class SetupWizard(QDialog):
         l.addStretch(1)
         return w
 
+    def _page_extras(self) -> QWidget:
+        w = QWidget()
+        l = QVBoxLayout(w)
+        l.setSpacing(10)
+        l.addWidget(label("A few extras", "h1"))
+        l.addWidget(label("These run in the background and need nothing from you. Untick anything you don't want.", "muted", wrap=True))
+
+        def card(box: QCheckBox, text: str, extra: QWidget | None = None) -> QFrame:
+            f = QFrame()
+            f.setObjectName("card")
+            fl = QVBoxLayout(f)
+            fl.setContentsMargins(12, 8, 12, 8)
+            fl.setSpacing(3)
+            fl.addWidget(box)
+            fl.addWidget(label(text, "muted", wrap=True, rich=True))
+            if extra is not None:
+                fl.addWidget(extra)
+            l.addWidget(f)
+            return f
+
+        self.cb_watch = QCheckBox("Tell me when an unknown device joins the network")
+        self.cb_watch.setChecked(True)
+        card(self.cb_watch, "NetBeacon scans once now to learn the devices you already have, then rescans every hour and tells you about newcomers "
+                            "(by pop-up, and by email/phone if you add those channels later).")
+        self.cb_speed = QCheckBox("Test my internet speed every 6 hours")
+        self.cb_speed.setChecked(True)
+        paid = QWidget()
+        pl = QHBoxLayout(paid)
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.addWidget(QLabel("My plan's download speed (optional):"))
+        self.paid = QDoubleSpinBox()
+        self.paid.setRange(0, 100000)
+        self.paid.setDecimals(0)
+        self.paid.setSuffix(" Mbit/s")
+        self.paid.setSpecialValueText("don't know")
+        pl.addWidget(self.paid)
+        pl.addStretch(1)
+        card(self.cb_speed, "Builds a history that shows whether you get what you pay for. Uses up to 35 MB per test (about 4 GB a month) - "
+                            "untick this on a metered or mobile connection.", paid)
+        self.cb_wifi = QCheckBox("Watch this PC's Wi-Fi signal")
+        self.cb_wifi.setChecked(True)
+        self.wifi_card = card(self.cb_wifi, "Adds a check that warns when the signal gets weak, and records it for the Wi-Fi page.")
+        self.wifi_card.setVisible(False)
+        self.cb_digest = QCheckBox("Prepare a plain-English summary every Monday at 9:00")
+        self.cb_digest.setChecked(True)
+        card(self.cb_digest, "A short 'how was the week' with outages, slow trends (like a disk filling up), speed and Wi-Fi. "
+                             "You can have it emailed too, once email is set up on the Alerts page.")
+        l.addStretch(1)
+        return w
+
     def _page_alerts(self) -> QWidget:
         w = QWidget()
         l = QVBoxLayout(w)
@@ -99,13 +195,11 @@ class SetupWizard(QDialog):
         return w
 
     def _build_page2(self) -> None:
+        site_text = self.site.text() if hasattr(self, "site") else ""
         lay = self.page2.layout()
         if lay is None:
             lay = QVBoxLayout(self.page2)
-        while lay.count():
-            it = lay.takeAt(0)
-            if it.widget():
-                it.widget().deleteLater()
+        _clear_layout(lay)
         lay.setSpacing(8)
         lay.addWidget(label("What shall we watch?", "h1"))
         lay.addWidget(label("We looked around your network and suggest these checks. Untick anything you don't want - you can add or change checks any time.", "muted", wrap=True))
@@ -120,9 +214,17 @@ class SetupWizard(QDialog):
             fl.addWidget(s.box)
             fl.addWidget(label(s.why, "muted", wrap=True))
             lay.addWidget(f)
+        scan_row = QHBoxLayout()
+        self.scan_btn = make_button("Also look for printers, servers and storage...")
+        self.scan_btn.setToolTip("A quick scan of your network (about 20-40 seconds) to suggest checks for the devices that matter.")
+        self.scan_btn.clicked.connect(self._scan_devices)
+        scan_row.addWidget(self.scan_btn)
+        self.scan_label = label(self.scan_note, "muted", wrap=True)
+        scan_row.addWidget(self.scan_label, 1)
+        lay.addLayout(scan_row)
         row = QHBoxLayout()
         row.addWidget(QLabel("Your website (optional):"))
-        self.site = QLineEdit()
+        self.site = QLineEdit(site_text)
         self.site.setPlaceholderText("https://www.yourcompany.com")
         row.addWidget(self.site, 1)
         lay.addLayout(row)
@@ -138,15 +240,23 @@ class SetupWizard(QDialog):
         def work(_t: Task):
             gw = netutil.default_gateway()
             nets = netutil.local_networks()
-            return gw, nets[0].label() if nets else ""
+            return gw, nets[0].label() if nets else "", wifi.read_status()
 
         self._task = Task(work, self)
         self._task.result.connect(self._detected)
-        self._task.failed.connect(lambda _m: self._detected((None, "")))
+        self._task.failed.connect(lambda _m: self._detected((None, "", None)))
         self._task.start()
 
     def _detected(self, res) -> None:
-        gw, net = res
+        gw, net, wst = res
+        self.gateway = gw
+        if gw:
+            self.ctx.store.set("last_gateway", gw)
+        self.wifi_status = wst
+        on_wifi = bool(wst and wst.available and wst.connected)
+        self.wifi_card.setVisible(on_wifi)
+        if on_wifi:
+            self.cb_wifi.setText(f"Watch this PC's Wi-Fi signal (now {wst.signal}% on '{wst.ssid}')")
         self.suggestions = []
         if gw:
             self.suggestions.append(Suggestion("router", f"Router / gateway ({gw})", "Is your local network and router alive? Everything else depends on this one.",
@@ -162,11 +272,51 @@ class SetupWizard(QDialog):
         self.next.setEnabled(True)
         self._update_nav()
 
+    # ------------------------------------------------------------ device discovery
+    def _remember_ticks(self) -> None:
+        for s in self.suggestions:
+            if s.box is not None:
+                s.checked = s.box.isChecked()
+
+    def _scan_devices(self) -> None:
+        if self._scan_task and self._scan_task.isRunning():
+            return
+        nets = netutil.local_networks()
+        if not nets:
+            self.scan_label.setText("No network found to scan.")
+            return
+        cidr = nets[0].cidr
+        self.scan_btn.setEnabled(False)
+        self.scan_label.setText(f"Scanning {cidr}... (about 20-40 seconds)")
+
+        def work(t: Task):
+            return netutil.scan_network(cidr, deep=True, cancel=t.cancel_event)
+
+        self._scan_task = Task(work, self)
+        self._scan_task.result.connect(self._devices_found)
+        self._scan_task.failed.connect(lambda m: (self.scan_btn.setEnabled(True), self.scan_label.setText(f"Scan failed: {m}")))
+        self._scan_task.start()
+
+    def _devices_found(self, found) -> None:
+        self.scan_btn.setEnabled(True)
+        self._remember_ticks()
+        have = {s.key for s in self.suggestions}
+        added = suggestions_for_devices(found or [], have)
+        self.suggestions.extend(added)
+        self.scan_note = (f"Found {len(found or [])} devices; {len(added)} look worth watching (added below)." if added
+                          else f"Found {len(found or [])} devices, but none look like printers, servers or storage.")
+        self._build_page2()
+        self.scan_label.setText(self.scan_note)
+        from .. import devices
+        if found:
+            devices.merge_scan(self.ctx.history, found)
+            self.ctx.devices_changed.emit()
+
     # ------------------------------------------------------------ navigation
     def _update_nav(self) -> None:
         i = self.stack.currentIndex()
         self.back.setVisible(i > 0)
-        self.next.setText("Finish" if i == 2 else "Next")
+        self.next.setText("Finish" if i == 3 else "Next")
 
     def _back(self) -> None:
         self.stack.setCurrentIndex(max(0, self.stack.currentIndex() - 1))
@@ -178,8 +328,8 @@ class SetupWizard(QDialog):
             self.stack.setCurrentIndex(1)
             if not self.suggestions:
                 self._detect()
-        elif i == 1:
-            self.stack.setCurrentIndex(2)
+        elif i in (1, 2):
+            self.stack.setCurrentIndex(i + 1)
         else:
             self._finish()
             return
@@ -188,6 +338,13 @@ class SetupWizard(QDialog):
     def _skip(self) -> None:
         self.ctx.store.set("first_run_done", True)
         self.reject()
+
+    def done(self, r: int) -> None:
+        for t in (self._task, self._scan_task):
+            if t is not None and t.isRunning():
+                t.cancel()
+                t.wait(5000)
+        super().done(r)
 
     def _finish(self) -> None:
         s = self.ctx.store
@@ -204,6 +361,8 @@ class SetupWizard(QDialog):
                 m.name = "Internet connection"
             if sug.key == "dns":
                 m.name = "DNS lookup"
+            if sug.key.startswith("dev-"):
+                m.name = sug.title
             if sug.depends_on_router and router_id:
                 m.depends = [router_id]
             s.add(m)
@@ -222,6 +381,16 @@ class SetupWizard(QDialog):
                 t = MonitorDef.new("tls", f"Certificate {host}", {**CHECKS["tls"].defaults(), "host": host})
                 t.group = "Websites"
                 s.add(t)
+        if self.cb_wifi.isChecked() and not self.wifi_card.isHidden() and self.wifi_status and self.wifi_status.connected:
+            wf = MonitorDef.new("wifi", "Wi-Fi signal", {**CHECKS["wifi"].defaults(), "min_signal": 40, "ssid": self.wifi_status.ssid})
+            wf.group, wf.tolerance = "This PC", 2
+            s.add(wf)
+        s.settings["speed_enabled"] = self.cb_speed.isChecked()
+        if self.paid.value():
+            s.settings["speed_paid_down"] = self.paid.value()
+        s.settings["digest_enabled"] = self.cb_digest.isChecked()
+        s.settings["digest_weekday"], s.settings["digest_hour"] = 0, 9
+        s.settings["scan_watch_enabled"] = self.cb_watch.isChecked()
         s.settings["channels"]["desktop"]["enabled"] = self.cb_desktop.isChecked()
         s.settings["minimize_to_tray"] = self.cb_tray.isChecked()
         s.settings["teaching_mode"] = self.cb_teach.isChecked()
@@ -233,4 +402,6 @@ class SetupWizard(QDialog):
             system.set_autostart(self.cb_start.isChecked())
         self.ctx.apply_changes()
         self.ctx.settings_changed.emit()
+        if self.cb_watch.isChecked() and self.ctx.main_window is not None and not s.get("devices_baseline_done"):
+            self.ctx.main_window.baseline_scan()
         self.accept()

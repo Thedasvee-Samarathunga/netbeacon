@@ -47,6 +47,8 @@ class DevicesPage(Page):
         bar.addStretch(1)
         self.known_btn = make_button("Mark selected as known")
         self.all_btn = make_button("Mark all as known")
+        self.wake_btn = make_button("Wake up selected", tooltip="Send a Wake-on-LAN 'magic packet' to switch a sleeping PC on.")
+        bar.addWidget(self.wake_btn)
         bar.addWidget(self.known_btn)
         bar.addWidget(self.all_btn)
         self.root.addLayout(bar)
@@ -88,6 +90,7 @@ class DevicesPage(Page):
         self.cancel_btn.clicked.connect(self._cancel)
         self.known_btn.clicked.connect(self._mark_selected)
         self.all_btn.clicked.connect(self._mark_all)
+        self.wake_btn.clicked.connect(lambda: self._wake())
         self.export_btn.clicked.connect(self._export)
         self.table.customContextMenuRequested.connect(self._menu)
         self._fill_networks()
@@ -171,6 +174,10 @@ class DevicesPage(Page):
         known_before = [d for d in self.ctx.history.devices() if d["known"]]
         rows, fresh = merge_scan(self.ctx.history, devices)
         self._render(rows)
+        gw = next((d.ip for d in devices if d.is_gateway), "")
+        if gw:
+            self.ctx.store.set("last_gateway", gw)
+        self.ctx.devices_changed.emit()
         found = len(devices)
         baseline = bool(self.ctx.store.get("devices_baseline_done"))
         msg = f"Found {found} devices."
@@ -219,12 +226,14 @@ class DevicesPage(Page):
         if d:
             self.ctx.history.set_device(d["key"], known=1)
             self._render(self._refresh_flags())
+            self.ctx.devices_changed.emit()
 
     def _mark_all(self) -> None:
         self.ctx.history.mark_all_known()
         self.ctx.store.set("devices_baseline_done", True)
         self._render(self._refresh_flags())
         self.status.setText("All devices marked as known. From now on, newcomers will be flagged as NEW.")
+        self.ctx.devices_changed.emit()
 
     def _refresh_flags(self) -> list[dict]:
         db = {d["key"]: d for d in self.ctx.history.devices()}
@@ -242,6 +251,7 @@ class DevicesPage(Page):
         if ok:
             self.ctx.history.set_device(d["key"], name=text.strip(), known=1)
             self._render(self._refresh_flags())
+            self.ctx.devices_changed.emit()
 
     def _forget(self) -> None:
         d = self._selected()
@@ -249,12 +259,23 @@ class DevicesPage(Page):
             self.ctx.history.forget_device(d["key"])
             self.rows = [r for r in self.rows if r["key"] != d["key"]]
             self._render(self.rows)
+            self.ctx.devices_changed.emit()
 
     def _monitor(self) -> None:
         d = self._selected()
         if d:
             label_ = d["name"] or d["hostname"] or d["ip"]
             self.ctx.main_window.open_check_dialog(kind="ping", params={"host": d["ip"]}, name=f"Ping {label_}")
+
+    def _wake(self) -> None:
+        d = self._selected()
+        if not d:
+            self.ctx.toast("Select a device first.", "info")
+            return
+        if not d["mac"]:
+            self.ctx.toast("NetBeacon doesn't know this device's MAC address, which Wake-on-LAN needs. Scan while it is switched on once.", "info")
+            return
+        self.ctx.main_window.wake_device(d["mac"], d["name"] or d["hostname"] or d["ip"])
 
     def _copy_mac(self) -> None:
         d = self._selected()
@@ -270,6 +291,8 @@ class DevicesPage(Page):
         m.addAction("Mark as known", self._mark_selected)
         m.addAction("Monitor this device (add a ping check)...", self._monitor)
         m.addAction("Scan its ports...", lambda: self.ctx.main_window.scan_ports_of(self._selected()["ip"]))
+        wake = m.addAction("Wake it up (Wake-on-LAN)", self._wake)
+        wake.setEnabled(bool(self._selected()["mac"]))
         m.addAction("Copy MAC address (for vendor lookup)", self._copy_mac)
         m.addSeparator()
         m.addAction("Forget this device", self._forget)

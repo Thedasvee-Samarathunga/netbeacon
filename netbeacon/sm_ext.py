@@ -133,7 +133,7 @@ class LanHTTP(_Timed, MonitorHTTP):
     def run_test(self) -> bool:
         import requests
 
-        headers = {"User-Agent": "NetBeacon/1.0 (+SimpleMonitor)"}
+        headers = {"User-Agent": "NetBeacon/1.1 (+SimpleMonitor)"}
         if self.headers:
             headers.update(self.headers)
         start = time.perf_counter()
@@ -341,6 +341,39 @@ class LanCommand(Monitor):
 
     def get_params(self) -> Tuple:
         return (tuple(self.args), self.expect_text)
+
+
+@register_monitor
+class LanWifi(Monitor):
+    """Wi-Fi signal strength of this PC's connection (Windows, via netsh)."""
+
+    monitor_type = "lan_wifi"
+
+    def __init__(self, name: str, config_options: dict) -> None:
+        super().__init__(name, config_options)
+        self.min_signal = self.get_config_option("min_signal", required_type="int", default=50, minimum=1, maximum=100)
+        self.ssid = (self.get_config_option("ssid", default="") or "").strip()
+
+    def run_test(self) -> bool:
+        from . import wifi
+        st = wifi.read_status()
+        if not st.available:
+            return self.record_fail(st.note or "Wi-Fi details are not available")
+        if not st.connected:
+            return self.record_fail("this PC is not connected to Wi-Fi")
+        if self.ssid and st.ssid != self.ssid:
+            return self.record_fail(f"connected to '{st.ssid}', not '{self.ssid}'")
+        word, _ = wifi.quality(st.signal)
+        msg = f"{st.ssid}: signal {st.signal}% ({word}, about {st.dbm} dBm), {st.band or '?'} channel {st.channel or '?'}"
+        if st.signal is not None and st.signal < self.min_signal:
+            return self.record_fail(f"{msg} - below the {self.min_signal}% limit")
+        return self.record_success(msg)
+
+    def describe(self) -> str:
+        return f"Wi-Fi signal stays above {self.min_signal}%" + (f" on '{self.ssid}'" if self.ssid else "")
+
+    def get_params(self) -> Tuple:
+        return (self.min_signal, self.ssid)
 
 
 # --------------------------------------------------------------------------- logger -> GUI/history

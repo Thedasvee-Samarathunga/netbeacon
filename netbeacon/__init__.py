@@ -6,4 +6,4 @@ and lots of explanations around it.
 """
 
 APP_NAME = "NetBeacon"
-__version__ = "1.0.0"
+__version__ = "1.1.0"

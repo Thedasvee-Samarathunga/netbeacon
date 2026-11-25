@@ -22,6 +22,8 @@ class DashboardPage(Page):
     def __init__(self, ctx) -> None:
         super().__init__(ctx)
         head = PageHeader("Dashboard", "Everything NetBeacon is watching, right now.")
+        self.diag_btn = head.add_action(make_button("What's wrong?", tooltip="Test the connection step by step and find where it breaks."))
+        self.diag_btn.clicked.connect(lambda: ctx.main_window.diagnose())
         self.add_btn = head.add_action(make_button("+ Add a check", "primary"))
         self.add_btn.clicked.connect(lambda: ctx.main_window.open_check_dialog())
         self.root.addWidget(head)
@@ -202,6 +204,7 @@ class DashboardPage(Page):
         r = self._current_row()
         m = QMenu(self)
         m.addAction("View uptime and history", self._open_uptime)
+        m.addAction("What's wrong with this?", lambda: self.ctx.main_window.diagnose(r["id"]))
         m.addAction("Edit...", lambda: self.ctx.main_window.edit_check(r["id"]))
         m.addAction("Check everything now", self.ctx.core.check_now)
         m.exec(self.view.viewport().mapToGlobal(pos))

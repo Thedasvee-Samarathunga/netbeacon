@@ -34,6 +34,22 @@ TIPS: dict[str, tuple[str, str]] = {
                  "<b>Config files</b> shows the exact settings NetBeacon gives SimpleMonitor - the same files you can use with plain SimpleMonitor later."),
     "learn": ("The 10-minute network monitoring course",
               "Short lessons about the ideas behind this tool - and how to recognise when you've outgrown it."),
+    "map": ("Your network as a picture",
+            "This is a <b>network map</b> (bigger tools call it a <i>topology map</i>). Your router sits in the middle because everything passes "
+            "through it - if it fails, every line fails. A device with a check takes that check's colour; blue devices are known but not monitored. "
+            "When something goes red, the map shows at a glance whether it's one device or everything behind the router."),
+    "speed": ("Are you getting what you pay for?",
+              "A speed test downloads and uploads some data and measures how fast it went, in <b>megabits per second</b> (Mbit/s). "
+              "Providers sell 'up to' speeds, so a single slow result proves little - but tests every few hours build a <b>trend</b>, "
+              "and a pattern of slow evenings is solid evidence when you call your provider."),
+    "wifi": ("Wi-Fi is radio",
+             "Wi-Fi is a radio conversation between this PC and an access point. Walls, distance and <b>other networks on the same channel</b> "
+             "all weaken it. The signal percentage is what Windows shows as bars; <b>dBm</b> is the engineer's unit (closer to 0 is stronger: "
+             "-50 is excellent, -70 is fine, -80 is poor). Most 'the internet is slow at that desk' complaints start here."),
+    "digest": ("The week in sentences",
+               "Graphs are great for technicians; owners want sentences. Every week NetBeacon turns its history into a short summary: "
+               "outages, what is slowly getting worse (a disk filling up), speed and Wi-Fi. Fixing the slow trends <i>before</i> they become "
+               "outages is what professionals call <b>capacity planning</b>."),
     "settings": ("Make NetBeacon yours",
                  "Most people never need to change anything here, except maybe 'Start with Windows' so monitoring survives reboots."),
 }
@@ -64,6 +80,15 @@ GLOSSARY: dict[str, str] = {
     "HTTP status code": "The server's answer code: 2xx = success, 3xx = redirect, 4xx = you asked wrong (404 not found), 5xx = server broke.",
     "ICMP": "The protocol behind ping and 'host unreachable' messages.",
     "Incident": "One continuous period when a check was down - with a start, an end and a cause.",
+    "Jitter": "How much latency varies from one moment to the next. High jitter makes calls and video choppy even on a fast line.",
+    "Mbit/s": "Megabits per second - the unit of internet speed. Divide by 8 for megabytes per second: 100 Mbit/s moves about 12 MB a second.",
+    "dBm / RSSI": "Wi-Fi signal strength in decibel-milliwatts. Always negative; closer to 0 is stronger. -50 excellent, -70 fine, -80 poor.",
+    "Wi-Fi band": "2.4 GHz reaches further but is slower and crowded; 5 GHz (and 6 GHz) is faster but weaker through walls.",
+    "Wi-Fi channel": "The slice of radio a Wi-Fi network uses. On 2.4 GHz only channels 1, 6 and 11 don't overlap.",
+    "Wake-on-LAN": "Switching a sleeping or powered-off PC on over the network by sending it a 'magic packet'. Must be enabled in the PC's BIOS.",
+    "Magic packet": "The Wake-on-LAN message: six 0xFF bytes followed by the target's MAC address repeated 16 times.",
+    "Root cause": "The first thing that broke. Everything after it in the chain fails because of it - fix the root cause and the rest recovers.",
+    "Topology": "How devices are connected to each other (what is behind what). A network map is a picture of the topology.",
     "IP address": "A device's address on a network, such as 192.168.1.20.",
     "Latency": "How long a message takes to travel there and back, in milliseconds (ms). Lower is better.",
     "MAC address": "A device's hardware address, burned in at the factory (or randomised for privacy on phones).",
@@ -366,7 +391,30 @@ Phones and modern laptops often use a <b>private (randomised) MAC</b> per Wi-Fi 
 <p>SimpleMonitor can also run in several places (e.g. one per office) and <b>send results to a central instance</b> - its simple answer to "remote sites".</p>
 """},
     {
-        "id": "graduate", "title": "14. Outgrowing NetBeacon: what next?", "minutes": 5,
+        "id": "rootcause", "title": "14. Finding the cause: diagnosis, Wi-Fi and speed", "minutes": 5,
+        "html": """
+<h2>Finding the cause</h2>
+<p>"The internet is down" can mean five very different things. Professionals find out which by testing <b>outwards from the PC</b>,
+one link at a time - exactly what NetBeacon's <b>What's wrong?</b> button does:</p>
+<table><tr><th>Step</th><th>If it fails, the problem is...</th></tr>
+<tr><td>This PC has a network address</td><td>this PC: cable, Wi-Fi, adapter, Airplane mode</td></tr>
+<tr><td>The router answers</td><td>inside the office: router, switch, cable, Wi-Fi</td></tr>
+<tr><td>1.1.1.1 answers (by number)</td><td>the modem or your internet provider</td></tr>
+<tr><td>Names work (DNS)</td><td>the DNS server - often the router itself</td></tr>
+<tr><td>Web pages load</td><td>a proxy, firewall or a guest-Wi-Fi login page</td></tr></table>
+<p>The <b>first</b> failure is the <b>root cause</b>; everything after it fails <i>because</i> of it. That's also why dependencies
+(lesson 8) matter: they stop you getting twenty alerts for one root cause.</p>
+<h3>Slow is not the same as down</h3>
+<ul><li><b>Wi-Fi</b>: a weak signal (below about 40%, or -80 dBm) or a crowded channel makes everything slow and flaky, while every check
+still says 'up'. The Wi-Fi page shows signal, channel and neighbours, and the <i>Wi-Fi signal</i> check can alert you.</li>
+<li><b>Internet speed</b>: regular speed tests show whether the line delivers what you pay for, and when it doesn't (evenings are typical).
+Test from a cabled PC for fair numbers.</li></ul>
+<h3>Waking things up</h3>
+<p>The Devices page and the map can send a <b>Wake-on-LAN</b> packet to switch on a sleeping PC - handy before remote work or overnight updates.
+It needs to be enabled in that PC's BIOS/UEFI and network adapter settings, and usually only works inside the same network.</p>
+"""},
+    {
+        "id": "graduate", "title": "15. Outgrowing NetBeacon: what next?", "minutes": 5,
         "html": "@@GRADUATE@@"},
 ]
 
@@ -408,6 +456,9 @@ SimpleMonitor can forward results to a central instance, and writes an HTML stat
 <tr><td>What to do if this fails (<code>failure_doc</code>)</td><td>Runbook, KB link, comment</td></tr>
 <tr><td>Quiet hours</td><td>Notification period, schedule, maintenance window</td></tr>
 <tr><td>Incident</td><td>Problem, event, outage</td></tr>
+<tr><td>What's wrong? (diagnosis)</td><td>Root cause analysis, topology-aware alerting</td></tr>
+<tr><td>Network map</td><td>Topology map, network map, maps (Zabbix), device tree (PRTG)</td></tr>
+<tr><td>Weekly summary</td><td>Scheduled report, SLA report</td></tr>
 </table>
 <p>The concepts carry over almost one-to-one - you will not be starting from scratch.</p>
 """

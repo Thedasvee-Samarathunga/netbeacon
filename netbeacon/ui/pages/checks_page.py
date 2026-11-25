@@ -140,6 +140,7 @@ class ChecksPage(Page):
         m.addAction("Duplicate...", self._duplicate)
         m.addAction("Resume" if not r["enabled"] else "Pause", self._toggle)
         m.addAction("View uptime and history", lambda: self.ctx.main_window.show_uptime_for(r["name"]))
+        m.addAction("What's wrong with this?", lambda: self.ctx.main_window.diagnose(r["id"]))
         m.addSeparator()
         m.addAction("Delete...", self._delete)
         m.exec(self.view.viewport().mapToGlobal(pos))

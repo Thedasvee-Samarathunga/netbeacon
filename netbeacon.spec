@@ -14,6 +14,7 @@ IS_WIN = sys.platform == "win32"
 # and ship its html/ status-page templates plus its package metadata (it reads its own version).
 hidden = collect_submodules("simplemonitor") + [
     "netbeacon.sm_ext", "netbeacon.compat", "netbeacon.selftest",
+    "netbeacon.diagnose", "netbeacon.digest", "netbeacon.notify", "netbeacon.speedtest", "netbeacon.wifi",
     "icmplib", "jinja2", "markupsafe", "colorlog", "arrow", "dateutil", "psutil", "requests",
 ]
 datas = collect_data_files("simplemonitor") + copy_metadata("simplemonitor") + [("assets/netbeacon.png", "assets")]
@@ -32,14 +33,14 @@ version_info = None
 if IS_WIN:
     from PyInstaller.utils.win32.versioninfo import (FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo,
                                                       VarStruct, VSVersionInfo)
-    ver = (1, 0, 0, 0)
+    ver = (1, 1, 0, 0)
     version_info = VSVersionInfo(
         ffi=FixedFileInfo(filevers=ver, prodvers=ver, mask=0x3F, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0),
         kids=[StringFileInfo([StringTable("040904B0", [
             StringStruct("CompanyName", "NetBeacon"), StringStruct("FileDescription", "NetBeacon network monitor"),
-            StringStruct("FileVersion", "1.0.0"), StringStruct("InternalName", "NetBeacon"),
+            StringStruct("FileVersion", "1.1.0"), StringStruct("InternalName", "NetBeacon"),
             StringStruct("OriginalFilename", "NetBeacon.exe"), StringStruct("ProductName", "NetBeacon"),
-            StringStruct("ProductVersion", "1.0.0")])]), VarFileInfo([VarStruct("Translation", [1033, 1200])])])
+            StringStruct("ProductVersion", "1.1.0")])]), VarFileInfo([VarStruct("Translation", [1033, 1200])])])
 
 a = Analysis(
     ["run_netbeacon.py"], pathex=["."], binaries=[], datas=datas, hiddenimports=hidden,

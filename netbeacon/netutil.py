@@ -712,3 +712,66 @@ def format_duration(seconds: float) -> str:
     if m:
         return f"{m}m {s}s"
     return f"{s}s"
+
+
+# --------------------------------------------------------------------------- Wake-on-LAN
+def magic_packet(mac: str) -> bytes:
+    """6 x 0xFF followed by the MAC address 16 times - the 'wake up' packet network cards listen for."""
+    norm = normalize_mac(mac)
+    parts = norm.split(":")
+    if len(parts) != 6:
+        raise ValueError(f"'{mac}' is not a MAC address")
+    try:
+        raw = bytes(int(p, 16) for p in parts)
+    except ValueError as exc:
+        raise ValueError(f"'{mac}' is not a MAC address") from exc
+    return b"\xff" * 6 + raw * 16
+
+
+def broadcast_addresses() -> list[str]:
+    """Where to send a wake-up packet: each local network's broadcast address, plus the general one."""
+    out: list[str] = []
+    for n in local_networks():
+        b = str(n.network.broadcast_address)
+        if b not in out:
+            out.append(b)
+    out.append("255.255.255.255")
+    return out
+
+
+def wake_on_lan(mac: str, targets: Optional[list[str]] = None, port: int = 9) -> list[str]:
+    """Send a magic packet. Returns the addresses it was sent to. Raises ValueError for a bad MAC."""
+    packet = magic_packet(mac)
+    sent: list[str] = []
+    errors: list[str] = []
+    for addr in (targets or broadcast_addresses()):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                s.sendto(packet, (addr, port))
+            sent.append(addr)
+        except OSError as exc:
+            errors.append(f"{addr}: {exc}")
+    if not sent:
+        raise OSError("could not send the wake-up packet (" + "; ".join(errors) + ")")
+    return sent
+
+
+# --------------------------------------------------------------------------- small HTTP probe
+def http_probe(url: str, timeout_s: float = 6.0, expect: str = "") -> tuple[bool, Optional[int], str, float]:
+    """(ok, status code, message, ms). ok = got an answer (and the expected text, if given)."""
+    import requests
+    start = time.perf_counter()
+    try:
+        resp = requests.get(url, timeout=timeout_s, allow_redirects=False,
+                            headers={"User-Agent": "NetBeacon/1.1 (+diagnosis)"})
+    except requests.exceptions.SSLError as exc:
+        return False, None, f"secure connection failed ({str(exc)[:120]})", (time.perf_counter() - start) * 1000
+    except requests.exceptions.Timeout:
+        return False, None, f"no answer within {timeout_s:.0f} s", (time.perf_counter() - start) * 1000
+    except requests.exceptions.RequestException as exc:
+        return False, None, f"could not connect ({str(exc)[:120]})", (time.perf_counter() - start) * 1000
+    ms = (time.perf_counter() - start) * 1000
+    if expect and expect not in resp.text:
+        return False, resp.status_code, f"HTTP {resp.status_code}, but the page was not the expected one", ms
+    return True, resp.status_code, f"HTTP {resp.status_code} in {ms:.0f} ms", ms

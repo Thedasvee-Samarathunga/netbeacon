@@ -225,6 +225,7 @@ def test_wizard_creates_checks(env):
                      Suggestion("internet", "Internet connection (1.1.1.1)", "x", "ping", {"host": "1.1.1.1"}, "Internet", 2, depends_on_router=True)]
     w._build_page2()
     w.site.setText("https://example.org")
+    w.cb_watch.setChecked(False)          # don't start a real network scan in the test
     w._finish()
     names = [m.name for m in ctx.store.monitors]
     assert names[:2] == ["Router", "Internet connection"] and "Company website" in names and "Certificate example.org" in names
@@ -245,3 +246,182 @@ def test_report_html(home):
     hist.open_incident(m.name, now - 30, "No reply <script>")
     out = reports.build_report(store, hist, now - 3600, now)
     assert "Router &lt;1&gt;" in out and "No reply &lt;script&gt;" in out and "50.000%" in out
+
+
+
+# ======================================================================= 1.1 features
+def wait_until(app, cond, seconds=20):
+    end = time.time() + seconds
+    while time.time() < end:
+        pump(app, 0.05)
+        if cond():
+            return True
+    return False
+
+
+def test_nav_has_the_new_pages(env):
+    ctx, win, app = env
+    for key in ("map", "wifi", "speed", "digest"):
+        assert key in win.pages and key in win.nav_buttons
+
+
+def test_diagnose_dialog_shows_verdict(env, monkeypatch):
+    ctx, win, app = env
+    from tests.test_features import fake_probes
+    from netbeacon.ui import diagnose_dialog
+    fp = fake_probes(internet=False)
+    monkeypatch.setattr(diagnose_dialog.diagnose, "Probes", lambda: fp)
+    m = ctx.store.add(MonitorDef.new("ping", "Internet", {**CHECKS["ping"].defaults(), "host": "1.1.1.1"}))
+    dlg = diagnose_dialog.DiagnoseDialog(ctx, win, check=m)
+    assert wait_until(app, lambda: dlg.result is not None)
+    assert dlg.result.culprit == "internet"
+    assert "internet provider" in dlg.verdict_text.text()
+    assert dlg.steps_lay.count() - 1 == len(dlg.result.steps) >= 5
+    assert ctx.store.get("last_gateway") == "192.168.1.1"
+    assert any("Diagnosis:" in e["text"] for e in ctx.history.events(limit=20))
+    dlg.done(0)
+
+
+def test_map_page_colours_devices_by_check(env):
+    ctx, win, app = env
+    h = ctx.history
+    scan = [Device(ip="192.168.1.1", mac="AA:BB:CC:00:00:01", alive=True, is_gateway=True),
+            Device(ip="192.168.1.20", mac="AA:BB:CC:00:00:02", alive=True, open_ports=[445]),
+            Device(ip="192.168.1.30", mac="AA:BB:CC:00:00:03", alive=True)]
+    rows, _ = devices.merge_scan(h, scan)
+    h.set_device("AA:BB:CC:00:00:02", known=1)
+    ctx.store.set("last_gateway", "192.168.1.1")
+    m = ctx.store.add(MonitorDef.new("tcp", "File server", {**CHECKS["tcp"].defaults(), "host": "192.168.1.20", "port": 445}))
+    win.pages["dashboard"].model.set_rows([{"id": m.id, "name": m.name, "status": "down"}])
+    page = win.pages["map"]
+    win.pages["devices"].rows = devices.stored_rows(h)
+    for r in win.pages["devices"].rows:
+        r["seen_now"] = True
+    win.show_page("map")
+    pump(app, 0.1)
+    page.rebuild()
+    states = {n["ip"]: n["state"] for n in page.canvas.nodes}
+    assert page.canvas.router["ip"] == "192.168.1.1"
+    assert states["192.168.1.20"] == "down" and states["192.168.1.30"] == "new"
+    page._select("AA:BB:CC:00:00:02")
+    assert "File server" in page.d_info.text() and page.b_diag.isVisibleTo(page) and page.b_wake.isVisibleTo(page)
+    assert page.grab().width() > 100
+
+
+def test_speed_page_runs_and_records(env):
+    ctx, win, app = env
+    from tests.test_features import _SpeedHandler
+    import http.server
+    import socketserver
+
+    class S(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+    srv = S(("127.0.0.1", 0), _SpeedHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    ctx.store.settings.update(speed_server=f"http://127.0.0.1:{srv.server_address[1]}", speed_max_down_mb=2, speed_max_up_mb=1,
+                              speed_paid_down=10000)
+    page = win.pages["speed"]
+    page.run_test()
+    assert wait_until(app, lambda: page.table.rowCount() == 1, 30)
+    assert ctx.history.speedtests()[0]["down"] > 0
+    assert "%" in page.c_plan.value.text()
+    assert any("Speed test:" in e["text"] for e in ctx.history.events(limit=10))
+    srv.shutdown()
+
+
+def test_speed_page_schedule(env):
+    ctx, win, app = env
+    page = win.pages["speed"]
+    called = []
+    page.run_test = lambda silent=False: called.append(silent)
+    ctx.store.settings.update(speed_enabled=True, speed_every_hours=6, last_speedtest_ts=time.time() - 7 * 3600)
+    page._maybe_run()
+    assert called == [True]
+    ctx.store.settings["last_speedtest_ts"] = time.time()
+    page._maybe_run()
+    assert called == [True]
+
+
+def test_wifi_page_renders_status_and_networks(env):
+    ctx, win, app = env
+    from tests.test_features import IFACES_EN, NETWORKS
+    from netbeacon import wifi
+    page = win.pages["wifi"]
+    page.status = wifi.parse_interfaces(IFACES_EN)
+    page.networks = wifi.parse_networks(NETWORKS)[0]
+    page._record(page.status)
+    page._render()
+    assert page.c_sig.value.text() == "38%" and "poor" in page.c_sig.sub.text()
+    assert page.table.rowCount() == 4 and "overlaps" in page.advice.text()
+    assert ctx.history.wifi_samples()[0]["signal"] == 38
+    win.show_page("wifi")
+    page._loaded = True
+    pump(app, 0.05)
+    assert page.grab().width() > 100
+
+
+def test_digest_page_creates_and_schedules(env):
+    ctx, win, app = env
+    page = win.pages["digest"]
+    ctx.store.add(MonitorDef.new("ping", "Router", {**CHECKS["ping"].defaults(), "host": "10.0.0.1"}))
+    ctx.history.add_result(time.time() - 60, "Router", 0, 2.0, "ok")
+    page.make()
+    assert "A good week" in page.view.toHtml()
+    notes = []
+    win._on_notification = lambda t, x, l: notes.append(t)
+    ctx.store.settings.update(digest_enabled=True, last_digest_ts=time.time() - 8 * 86400)
+    page._maybe_send()
+    assert notes == ["Your weekly network summary is ready"]
+    assert any(e["text"].startswith("Weekly summary") for e in ctx.history.events(limit=10))
+    from netbeacon.ui.pages.digest_page import summaries_dir
+    assert list(summaries_dir().glob("summary-*.html"))
+    page._maybe_send()                     # not due again
+    assert len(notes) == 1
+
+
+def test_wake_and_new_device_alerts(env, monkeypatch):
+    ctx, win, app = env
+    from netbeacon import netutil, notify
+    sent = []
+    monkeypatch.setattr(netutil, "wake_on_lan", lambda mac, *a, **k: sent.append(mac) or ["192.168.1.255"])
+    assert win.wake_device("AA:BB:CC:DD:EE:FF", "Accounts PC")
+    assert sent == ["AA:BB:CC:DD:EE:FF"]
+    assert any("Wake-on-LAN" in e["text"] for e in ctx.history.events(limit=5))
+    broadcasts = []
+    monkeypatch.setattr(notify, "broadcast", lambda store, title, msg, **k: broadcasts.append((title, msg)) or {"email": "boom"})
+    win._on_notification = lambda *a: None
+    devices.merge_scan(ctx.history, [Device(ip="192.168.1.1", mac="AA:00:00:00:00:01", alive=True)])
+    ctx.history.mark_all_known()
+    win._watch_done([Device(ip="192.168.1.1", mac="AA:00:00:00:00:01", alive=True),
+                     Device(ip="192.168.1.99", mac="AA:00:00:00:00:99", alive=True, open_ports=[9100])])
+    assert wait_until(app, lambda: broadcasts and any("via email" in e["text"] for e in ctx.history.events(limit=10)))
+    assert "192.168.1.99" in broadcasts[0][1] and "Printer" in broadcasts[0][1]
+
+
+def test_wizard_extras_and_device_suggestions(env):
+    ctx, win, app = env
+    from netbeacon import wifi
+    from netbeacon.ui.wizard import SetupWizard, Suggestion, suggestions_for_devices
+    found = [Device(ip="192.168.1.1", is_gateway=True, open_ports=[80]),
+             Device(ip="192.168.1.50", hostname="printer.lan", open_ports=[9100, 80]),
+             Device(ip="192.168.1.60", open_ports=[5000]),
+             Device(ip="192.168.1.70", mac="00:11:22:00:00:70", open_ports=[445])]
+    sug = suggestions_for_devices(found)
+    assert [s.title for s in sug] == ["Printer printer", "Storage 192.168.1.60 (web page)", "File sharing on 192.168.1.70"]
+    w = SetupWizard(ctx, win)
+    w.suggestions = [Suggestion("router", "Router (10.0.0.1)", "x", "ping", {"host": "10.0.0.1"}, "Internet", 1)]
+    w._build_page2()
+    w.site.setText("https://example.org")
+    w._devices_found(found)                       # rebuilding keeps the site text
+    assert w.site.text() == "https://example.org" and len(w.suggestions) == 4
+    w.wifi_status = wifi.WifiStatus(available=True, connected=True, ssid="Office", signal=70)
+    w.wifi_card.setVisible(True)
+    w.cb_watch.setChecked(False)
+    w.paid.setValue(200)
+    w._finish()
+    names = [m.name for m in ctx.store.monitors]
+    assert "Printer printer" in names and "Wi-Fi signal" in names and "File sharing on 192.168.1.70" not in names
+    printer = ctx.store.by_name("Printer printer")
+    assert printer.depends == [ctx.store.by_name("Router").id]
+    assert ctx.store.get("speed_enabled") and ctx.store.get("speed_paid_down") == 200 and ctx.store.get("digest_enabled")
+    assert not config_writer.build(ctx.store).problems

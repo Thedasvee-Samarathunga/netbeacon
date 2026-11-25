@@ -342,6 +342,121 @@ class LineChart(QWidget):
         self.update()
 
 
+class SeriesChart(QWidget):
+    """Several lines over time (e.g. download + upload, or Wi-Fi signal), with an optional reference line."""
+
+    def __init__(self, unit: str = "", min_height: int = 220) -> None:
+        super().__init__()
+        self.setMinimumHeight(min_height)
+        self.setMouseTracking(True)
+        self.series: list[dict] = []          # {"name", "color", "points": [(ts, value)]}
+        self.since = 0.0
+        self.until = 0.0
+        self.unit = unit
+        self.ref: Optional[tuple[float, str]] = None
+        self.fixed_top: Optional[float] = None
+        self.empty_text = "No data yet."
+        self._hover: Optional[tuple[int, int]] = None
+
+    def set_data(self, series: list[dict], since: float, until: float, ref: Optional[tuple[float, str]] = None) -> None:
+        self.series, self.since, self.until, self.ref = series, since, until, ref
+        self._hover = None
+        self.update()
+
+    def _plot(self) -> QRectF:
+        return QRectF(52, 26, self.width() - 70, self.height() - 52)
+
+    def _x(self, ts: float, plot: QRectF) -> float:
+        return plot.left() + (ts - self.since) / max(self.until - self.since, 1.0) * plot.width()
+
+    def paintEvent(self, _e) -> None:
+        pal = theme.palette()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QColor(pal["card"]))
+        muted, grid = QColor(pal["muted"]), QColor(pal["border"])
+        plot = self._plot()
+        values = [v for s in self.series for _, v in s["points"] if v is not None]
+        if not values:
+            p.setPen(muted)
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.empty_text)
+            return
+        top = self.fixed_top or _nice_ceiling(max(values + ([self.ref[0]] if self.ref else [])) * 1.1)
+        small = QFont(self.font())
+        small.setPointSizeF(max(7.5, small.pointSizeF() - 1.5))
+        p.setFont(small)
+        for i in range(5):
+            y = plot.bottom() - plot.height() * i / 4
+            p.setPen(QPen(grid, 1))
+            p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            p.setPen(muted)
+            p.drawText(QRectF(0, y - 8, plot.left() - 6, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{top * i / 4:g}")
+        span = self.until - self.since
+        for i in range(5):
+            ts = self.since + span * i / 4
+            x = plot.left() + plot.width() * i / 4
+            fmt = "%H:%M" if span <= 2 * 86400 else "%d %b"
+            p.drawText(QRectF(x - 40, plot.bottom() + 4, 80, 16), Qt.AlignmentFlag.AlignHCenter, time.strftime(fmt, time.localtime(ts)))
+        if self.ref:
+            y = plot.bottom() - self.ref[0] / top * plot.height()
+            p.setPen(QPen(muted, 1, Qt.PenStyle.DashLine))
+            p.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
+            p.drawText(QRectF(plot.right() - 260, y - 16, 256, 14), Qt.AlignmentFlag.AlignRight, self.ref[1])
+        lx = plot.left()
+        for s in self.series:
+            col = QColor(s["color"])
+            pts = [QPointF(self._x(ts, plot), plot.bottom() - v / top * plot.height()) for ts, v in s["points"] if v is not None]
+            if len(pts) > 1:
+                p.setPen(QPen(col, 2))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawPolyline(QPolygonF(pts))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(col)
+            if len(pts) <= 60:
+                for pt in pts:
+                    p.drawEllipse(pt, 3, 3)
+            p.drawEllipse(QPointF(lx + 5, 12), 5, 5)
+            p.setPen(QColor(pal["text"]))
+            label_ = f"{s['name']} ({self.unit})" if self.unit else s["name"]
+            p.drawText(QRectF(lx + 14, 4, 220, 16), Qt.AlignmentFlag.AlignVCenter, label_)
+            lx += 30 + QFontMetrics(small).horizontalAdvance(label_)
+        if self._hover is not None:
+            si, pi = self._hover
+            ts, v = self.series[si]["points"][pi]
+            x = self._x(ts, plot)
+            p.setPen(QPen(muted, 1, Qt.PenStyle.DotLine))
+            p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()))
+
+    def mouseMoveEvent(self, e) -> None:
+        plot = self._plot()
+        x = e.position().x()
+        best = None
+        for si, s in enumerate(self.series):
+            for pi, (ts, v) in enumerate(s["points"]):
+                if v is None:
+                    continue
+                dx = abs(self._x(ts, plot) - x)
+                if best is None or dx < best[0]:
+                    best = (dx, si, pi)
+        if best is None or best[0] > 25:
+            self._hover = None
+            QToolTip.hideText()
+        else:
+            self._hover = (best[1], best[2])
+            ts = self.series[best[1]]["points"][best[2]][0]
+            lines = [time.strftime("%d %b %H:%M", time.localtime(ts))]
+            for s in self.series:
+                near = min(s["points"], key=lambda pv: abs(pv[0] - ts), default=None)
+                if near and near[1] is not None and abs(near[0] - ts) < 120:
+                    lines.append(f"{s['name']}: {near[1]:.1f} {self.unit}".rstrip())
+            QToolTip.showText(e.globalPosition().toPoint(), "\n".join(lines), self)
+        self.update()
+
+    def leaveEvent(self, _e) -> None:
+        self._hover = None
+        self.update()
+
+
 def _nice_ceiling(v: float) -> float:
     for step in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 30000, 60000):
         if v <= step:
@@ -355,6 +470,7 @@ class Task(QThread):
     (`t.report(done, total, text)`) and poll `t.cancelled`."""
 
     progress = Signal(int, int, str)
+    item = Signal(object)          # live partial results (e.g. one diagnosis step at a time)
     result = Signal(object)
     failed = Signal(str)
 
@@ -372,6 +488,9 @@ class Task(QThread):
 
     def report(self, done: int, total: int, text: str = "") -> None:
         self.progress.emit(done, total, text)
+
+    def emit_item(self, obj: Any) -> None:
+        self.item.emit(obj)
 
     def run(self) -> None:
         try:

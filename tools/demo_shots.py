@@ -75,6 +75,23 @@ hist.add_event(now-5*3600, "error", fs.name, f"{fs.name} is DOWN: connection ref
 hist.add_event(now-20*3600, "warn", inet.name, f"{inet.name}: check failed (No reply). Retrying before calling it down (tolerance 2).")
 hist.add_event(now-18000, "info", web.name, f"{web.name}: a blip - it failed briefly but recovered before it counted as down.")
 
+# --- 1.1 demo data: speed tests, Wi-Fi samples, the router address
+store.settings.update(speed_paid_down=100, speed_paid_up=20, speed_enabled=True, last_gateway="192.168.1.1")
+for k in range(28):
+    ts = now - (27 - k) * 6 * 3600
+    evening = time.localtime(ts).tm_hour >= 18
+    down = max(8.0, rng.gauss(55 if evening else 92, 6))
+    hist.add_speedtest(ts, round(down, 1), round(max(2.0, rng.gauss(18, 2)), 1), round(rng.gauss(14, 2), 1), round(abs(rng.gauss(2, 1)), 1),
+                       "https://speed.cloudflare.com")
+for k in range(24 * 12):
+    ts = now - 86400 + k * 300
+    dip = 25 if 13 <= time.localtime(ts).tm_hour <= 14 else 0
+    hist.add_wifi_sample(ts, "OfficeNet", "11:22:33:44:55:66", int(max(15, rng.gauss(58 - dip, 4))), 4, "2.4 GHz", 144.4, 72)
+for k in range(15):
+    free = 160 - 2.5 * k
+    hist.add_result(now - (14 - k) * 86400, disk.name, ST_UP, None, f"{free:.1f} GB free ({free / 5:.0f}%) on C:\\")
+store.save()
+
 core = EngineCore(store, hist)
 ctx = AppContext(store, hist, core)
 win = MainWindow(ctx, start_minimized=True)
@@ -139,7 +156,24 @@ for key, _ in NAV:
 from netbeacon.ui.monitor_dialog import MonitorDialog
 d = MonitorDialog(ctx, win, kind="http"); d.resize(1100, 780); d.show(); d._toggle_adv(); shot("dialog-http", d); d.close()
 d = MonitorDialog(ctx, win, edit=store.by_id(inet.id)); d.resize(1100, 780); d.show(); shot("dialog-edit", d); d.close()
+from netbeacon import wifi as wifimod, diagnose
+from tests.test_features import IFACES_EN, NETWORKS, fake_probes
+wp = win.pages["wifi"]
+wp.status, wp.networks = wifimod.parse_interfaces(IFACES_EN), wifimod.parse_networks(NETWORKS)[0]
+wp._loaded = True
+win.show_page("wifi"); wp._render(); shot("wifi")
+win.show_page("map"); win.pages["map"].rebuild(); win.pages["map"]._select(win.pages["map"].canvas.nodes[1]["key"]); shot("map")
+win.show_page("digest"); shot("digest")
+from netbeacon.ui import diagnose_dialog
+_fp = fake_probes(dns=False, wifi_signal=58)
+diagnose_dialog.diagnose.Probes = lambda: _fp
+dd = diagnose_dialog.DiagnoseDialog(ctx, win); dd.resize(800, 760); dd.show()
+for _ in range(100):
+    app.processEvents(); time.sleep(0.02)
+    if dd.result: break
+app.processEvents(); shot("diagnose", dd); dd.close()
 from netbeacon.ui.wizard import SetupWizard
 w = SetupWizard(ctx, win); w.show(); shot("wizard1", w)
-w._next(); app.processEvents(); time.sleep(1.2); app.processEvents(); shot("wizard2", w); w.close()
+w._next(); app.processEvents(); time.sleep(1.2); app.processEvents(); shot("wizard2", w)
+w._next(); app.processEvents(); w.wifi_card.setVisible(True); app.processEvents(); shot("wizard3", w); w.close()
 print("done", out)

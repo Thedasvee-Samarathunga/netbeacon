@@ -442,6 +442,24 @@ _add(CheckType(
 ))
 
 _add(CheckType(
+    key="wifi", title="Wi-Fi signal strength", category="This PC / server health", sm_type="lan_wifi", standalone_type=None,
+    windows_only=True,
+    summary="Is this PC's Wi-Fi signal strong enough?",
+    what="<p>Reads the strength of this computer's Wi-Fi connection, the same number Windows shows as bars, as a percentage. "
+         "Around 60% and above is comfortable; below 40% video calls start to stutter.</p>",
+    why="<p>A weak or fading signal is the most common cause of 'the internet is slow at that desk'. Watching it over time shows whether "
+        "it is always weak (move the access point) or only sometimes (interference, a microwave, a crowded channel).</p>",
+    how="<p>NetBeacon extension <code>lan_wifi</code>. It reads Windows' <code>netsh wlan show interfaces</code>. There is no stock SimpleMonitor "
+        "equivalent, so it is skipped on export. The <b>Wi-Fi</b> page shows the full picture.</p>",
+    fields=[Field("min_signal", "Warn when the signal is below", "int", 50, minimum=1, maximum=100, suffix="%",
+                  help="Windows' percentage: 50% is about -75 dBm. Lower numbers make the check more relaxed."),
+            Field("ssid", "Must be connected to (optional)", "text", "", placeholder="e.g. OfficeNet",
+                  help="Also fail if this PC has jumped to another network, such as a neighbour's or the guest Wi-Fi.")],
+    target_fn=lambda p: str(p.get("ssid") or "this PC's Wi-Fi"), name_fn=lambda p: "Wi-Fi signal",
+    tips=["Pair this with a ping check of your router: if both go red at once, the Wi-Fi link itself is the problem."],
+))
+
+_add(CheckType(
     key="file", title="File or backup is fresh", category="Backups & files", sm_type="lan_file", standalone_fn=_std_file,
     summary="Did last night's backup actually run?",
     what="<p>Looks at a file (or, with wildcards like <code>*.bak</code>, the <b>newest</b> matching file) and checks it exists, "
